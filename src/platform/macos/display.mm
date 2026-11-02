@@ -80,6 +80,32 @@ namespace platf {
       return bounds;
     }
 
+    /**
+     * @brief Record the selected display and full desktop bounds used to map mouse input.
+     *
+     * @param display Display whose input geometry is populated.
+     * @param display_id CoreGraphics display being streamed.
+     */
+    void set_input_geometry(display_t &display, CGDirectDisplayID display_id) {
+      const auto selected_display_bounds = CGDisplayBounds(display_id);
+      const auto desktop_bounds = active_desktop_bounds(display_id);
+      display.offset_x = static_cast<int>(selected_display_bounds.origin.x);
+      display.offset_y = static_cast<int>(selected_display_bounds.origin.y);
+      display.logical_width = static_cast<int>(selected_display_bounds.size.width);
+      display.logical_height = static_cast<int>(selected_display_bounds.size.height);
+      display.env_offset_x = static_cast<int>(desktop_bounds.origin.x);
+      display.env_offset_y = static_cast<int>(desktop_bounds.origin.y);
+      display.env_logical_width = static_cast<int>(desktop_bounds.size.width);
+      display.env_logical_height = static_cast<int>(desktop_bounds.size.height);
+      display.env_width = display.env_logical_width;
+      display.env_height = display.env_logical_height;
+
+      BOOST_LOG(debug) << "Selected display bounds: "sv << display.offset_x << 'x' << display.offset_y << ' '
+                       << display.logical_width << 'x' << display.logical_height;
+      BOOST_LOG(debug) << "Active desktop bounds: "sv << display.env_offset_x << 'x' << display.env_offset_y << ' '
+                       << display.env_logical_width << 'x' << display.env_logical_height;
+    }
+
     OSType videotoolbox_pixel_format(const video::config_t &config) {
       const auto colorspace {video::colorspace_from_client_config(config, false)};
       return colorspace.bit_depth == 10 ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
@@ -151,7 +177,9 @@ namespace platf {
     }
 
     /**
-     * @brief Zero-fill all planes of a pixel buffer.
+     * @brief Fill all planes of a pixel buffer with black.
+     *
+     * Zero bytes are not black in video-range YUV, so planar buffers get legal black luma and neutral chroma.
      *
      * @param pixel_buffer Pixel buffer to clear.
      */
@@ -159,11 +187,19 @@ namespace platf {
       CVPixelBufferLockBaseAddress(pixel_buffer, 0);
 
       if (CVPixelBufferIsPlanar(pixel_buffer)) {
+        const auto format = CVPixelBufferGetPixelFormatType(pixel_buffer);
         for (size_t plane = 0; plane < CVPixelBufferGetPlaneCount(pixel_buffer); ++plane) {
           auto *base = static_cast<std::uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, plane));
           auto bytes_per_row = CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, plane);
           auto height = CVPixelBufferGetHeightOfPlane(pixel_buffer, plane);
-          std::memset(base, 0, bytes_per_row * height);
+          if (format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) {
+            std::memset(base, plane == 0 ? 16 : 128, bytes_per_row * height);
+          } else if (format == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange) {
+            auto *words = reinterpret_cast<std::uint16_t *>(base);
+            std::fill_n(words, bytes_per_row * height / sizeof(std::uint16_t), static_cast<std::uint16_t>((plane == 0 ? 64 : 512) << 6));
+          } else {
+            std::memset(base, 0, bytes_per_row * height);
+          }
         }
       } else {
         auto *base = static_cast<std::uint8_t *>(CVPixelBufferGetBaseAddress(pixel_buffer));
@@ -589,9 +625,7 @@ namespace platf {
         if (display->sc_capture) {
           display->width = display->sc_capture.frameWidth;
           display->height = display->sc_capture.frameHeight;
-          // We also need set env_width and env_height for absolute mouse coordinates
-          display->env_width = display->width;
-          display->env_height = display->height;
+          set_input_geometry(*display, display_id);
 
           if (hwdevice_type == platf::mem_type_e::videotoolbox) {
             const auto pixel_format {videotoolbox_pixel_format(config)};
@@ -610,24 +644,7 @@ namespace platf {
     auto display = std::make_shared<av_display_t>();
     display->display_id = display_id;
     display->display_power_guard = std::move(display_power_guard);
-
-    const auto selected_display_bounds = CGDisplayBounds(display->display_id);
-    const auto desktop_bounds = active_desktop_bounds(display->display_id);
-    display->offset_x = static_cast<int>(selected_display_bounds.origin.x);
-    display->offset_y = static_cast<int>(selected_display_bounds.origin.y);
-    display->logical_width = static_cast<int>(selected_display_bounds.size.width);
-    display->logical_height = static_cast<int>(selected_display_bounds.size.height);
-    display->env_offset_x = static_cast<int>(desktop_bounds.origin.x);
-    display->env_offset_y = static_cast<int>(desktop_bounds.origin.y);
-    display->env_logical_width = static_cast<int>(desktop_bounds.size.width);
-    display->env_logical_height = static_cast<int>(desktop_bounds.size.height);
-    display->env_width = display->env_logical_width;
-    display->env_height = display->env_logical_height;
-
-    BOOST_LOG(debug) << "Selected display bounds: "sv << display->offset_x << 'x' << display->offset_y << ' '
-                     << display->logical_width << 'x' << display->logical_height;
-    BOOST_LOG(debug) << "Active desktop bounds: "sv << display->env_offset_x << 'x' << display->env_offset_y << ' '
-                     << display->env_logical_width << 'x' << display->env_logical_height;
+    set_input_geometry(*display, display->display_id);
 
     display->av_capture = [[AVVideo alloc] initWithDisplay:display->display_id frameRate:config.framerate];
 
