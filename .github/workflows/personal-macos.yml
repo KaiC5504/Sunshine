@@ -1,0 +1,85 @@
+---
+# Builds the personal macOS fork on every push to `personal` and publishes a signed,
+# notarized GitHub release when run manually with `release` checked.
+name: Personal macOS
+permissions: {}
+
+on:
+  push:
+    branches:
+      - personal
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Publish a signed GitHub release
+        type: boolean
+        default: false
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Version
+    permissions: {}
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.version.outputs.publish }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Compute version
+        id: version
+        env:
+          RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+        run: |
+          # Same year.monthday.time scheme as upstream, so the web UI's version comparison keeps working.
+          echo "version=$(date -u +%Y.%-m%d.%-H%M%S)" >> "${GITHUB_OUTPUT}"
+          echo "publish=${RELEASE:-false}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build
+    needs: version
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-macos.yml
+    with:
+      publish_release: ${{ needs.version.outputs.publish }}
+      release_commit: ${{ github.sha }}
+      release_version: ${{ needs.version.outputs.version }}
+    secrets:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_NOTARYTOOL_PASSWORD: ${{ secrets.APPLE_NOTARYTOOL_PASSWORD }}
+      APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
+      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD }}
+
+  release:
+    name: Release
+    needs:
+      - version
+      - build
+    if: needs.version.outputs.publish == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download DMGs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: build-macOS-*
+          merge-multiple: true
+          path: artifacts
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          (cd artifacts && sha256sum ./*.dmg > SHA256SUMS.txt)
+          gh release create "v${VERSION}" artifacts/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "v${VERSION}" \
+            --generate-notes
