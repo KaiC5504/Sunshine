@@ -29,7 +29,7 @@ namespace clipboard_sync {
      */
     std::string to_utf8(const fs::path &path) {
       const auto text = path.u8string();
-      return {text.begin(), text.end()};
+      return std::string(text.begin(), text.end());
     }
 
     /**
@@ -39,7 +39,7 @@ namespace clipboard_sync {
      * @return Path for `text`.
      */
     fs::path from_utf8(std::string_view text) {
-      return fs::path {std::u8string {text.begin(), text.end()}};
+      return fs::path {std::u8string(text.begin(), text.end())};
     }
 
     /**
