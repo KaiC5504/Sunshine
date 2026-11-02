@@ -785,7 +785,7 @@
           this.version = new SunshineVersion(null, r.version);
         });
 
-      fetch("https://api.github.com/repos/LizardByte/Sunshine/releases/latest")
+      fetch("https://api.github.com/repos/KaiC5504/Sunshine/releases/latest")
         .then((r) => r.json())
         .then((r) => this.githubVersion = new SunshineVersion(r, null))
         .catch((e) => console.error(e));

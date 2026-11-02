@@ -32,10 +32,10 @@ async function mountHome(platform, { developmentVersion = true, licensed = true,
     if (url === './api/logs') {
       return { text: async () => '' }
     }
-    if (url === 'https://api.github.com/repos/LizardByte/Sunshine/releases/latest') {
+    if (url === 'https://api.github.com/repos/KaiC5504/Sunshine/releases/latest') {
       return { json: async () => ({ tag_name: 'v2026.927.1200' }) }
     }
-    if (url === 'https://api.github.com/repos/LizardByte/Sunshine/releases') {
+    if (url === 'https://api.github.com/repos/KaiC5504/Sunshine/releases') {
       return { json: async () => [{ tag_name: 'v2026.927.1200', prerelease: true }] }
     }
     throw new Error(`Unexpected fetch: ${url}`)

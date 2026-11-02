@@ -17,9 +17,10 @@ import en from '../../src_assets/common/assets/web/public/assets/locale/en.json'
  * @param {object} licenseStatus License status overrides.
  * @param {Array} permissions Platform permissions.
  * @param {object|null} i18n Optional Vue I18n plugin.
+ * @param {Array} clients Paired clients returned by the client list API.
  * @return {Promise<object>} Mounted troubleshooting wrapper.
  */
-async function mountTroubleshooting(platform, gamepadDriver, licenseStatus = {}, permissions = [], i18n = null) {
+async function mountTroubleshooting(platform, gamepadDriver, licenseStatus = {}, permissions = [], i18n = null, clients = []) {
   vi.stubGlobal('fetch', vi.fn(async (url) => {
     if (url === '/api/config') {
       return { json: async () => ({ platform, gamepad_driver: gamepadDriver }) }
@@ -50,7 +51,7 @@ async function mountTroubleshooting(platform, gamepadDriver, licenseStatus = {},
       return { text: async () => '' }
     }
     if (url === './api/clients/list') {
-      return { json: async () => ({ status: true, named_certs: [] }) }
+      return { json: async () => ({ status: true, named_certs: clients }) }
     }
     return {
       ok: true,
@@ -292,6 +293,30 @@ describe('virtual input troubleshooting', () => {
       'troubleshooting.permissions_status_not_determined',
     ])
     expect(wrapper.findAll('.permission-table-shell tbody button')).toHaveLength(2)
+    wrapper.unmount()
+  })
+})
+
+describe('paired client permissions', () => {
+  it('updates only the toggled permission for a client', async () => {
+    const wrapper = await mountTroubleshooting('macos', 'none', {}, [], null, [
+      { name: 'Laptop', uuid: 'client-uuid', enabled: false, clipboard: false, view_sessions: true },
+    ])
+
+    expect(wrapper.get('#clipboard-client-uuid').element.checked).toBe(false)
+    expect(wrapper.get('#sessions-client-uuid').element.checked).toBe(true)
+
+    await wrapper.get('#clipboard-client-uuid').trigger('change')
+    await wrapper.get('#sessions-client-uuid').trigger('change')
+    await flushPromises()
+
+    const updates = fetch.mock.calls
+      .filter(([url]) => url === './api/clients/update')
+      .map(([, options]) => JSON.parse(options.body))
+    expect(updates).toEqual([
+      { uuid: 'client-uuid', clipboard: true },
+      { uuid: 'client-uuid', view_sessions: false },
+    ])
     wrapper.unmount()
   })
 })

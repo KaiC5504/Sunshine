@@ -201,10 +201,11 @@
           console.error('Failed to fetch permission status:', e);
         }
         console.log("Version: ", this.version.version)
-        this.githubVersion = new SunshineVersion(await fetch("https://api.github.com/repos/LizardByte/Sunshine/releases/latest").then((r) => r.json()), null);
+        // Personal fork: updates come from its own releases, which has no pre-releases
+        this.githubVersion = new SunshineVersion(await fetch("https://api.github.com/repos/KaiC5504/Sunshine/releases/latest").then((r) => r.json()), null);
         console.log("GitHub Version: ", this.githubVersion.version)
-        this.preReleaseVersion = new SunshineVersion((await fetch("https://api.github.com/repos/LizardByte/Sunshine/releases").then((r) => r.json())).find(release => release.prerelease), null);
-        console.log("Pre-Release Version: ", this.preReleaseVersion.version)
+        const preRelease = (await fetch("https://api.github.com/repos/KaiC5504/Sunshine/releases").then((r) => r.json())).find?.(release => release.prerelease);
+        this.preReleaseVersion = preRelease ? new SunshineVersion(preRelease, null) : null;
 
         // Read the broker version on both platforms to identify development builds.
         if (this.platform === 'windows' || this.platform === 'macos') {
