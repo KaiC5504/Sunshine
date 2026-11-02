@@ -9,4 +9,8 @@ namespace platf {
   std::unique_ptr<clipboard_sync::backend_t> make_clipboard() {
     return nullptr;
   }
+
+  std::filesystem::path clipboard_transfer_directory() {
+    return {};
+  }
 }  // namespace platf

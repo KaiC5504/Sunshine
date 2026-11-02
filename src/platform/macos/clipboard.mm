@@ -73,6 +73,37 @@ namespace platf {
         }
       }
 
+      std::vector<std::filesystem::path> files() override {
+        @autoreleasepool {
+          std::vector<std::filesystem::path> paths;
+          NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+          if (is_private(pasteboard)) {
+            return paths;
+          }
+
+          NSArray<NSURL *> *urls = [pasteboard readObjectsForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+          for (NSURL *url in urls) {
+            if (const char *path = url.fileSystemRepresentation) {
+              paths.emplace_back(path);
+            }
+          }
+          return paths;
+        }
+      }
+
+      bool write_files(const std::vector<std::filesystem::path> &paths) override {
+        @autoreleasepool {
+          NSMutableArray<NSURL *> *urls = [NSMutableArray arrayWithCapacity:paths.size()];
+          for (const auto &path : paths) {
+            [urls addObject:[NSURL fileURLWithFileSystemRepresentation:path.c_str() isDirectory:NO relativeToURL:nil]];
+          }
+
+          NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+          [pasteboard clearContents];
+          return [pasteboard writeObjects:urls];
+        }
+      }
+
       bool write(const clipboard_sync::item_t &item) override {
         @autoreleasepool {
           NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
@@ -103,5 +134,15 @@ namespace platf {
 
   std::unique_ptr<clipboard_sync::backend_t> make_clipboard() {
     return std::make_unique<macos_clipboard_t>();
+  }
+
+  std::filesystem::path clipboard_transfer_directory() {
+    @autoreleasepool {
+      NSURL *downloads = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
+      if (!downloads) {
+        return {};
+      }
+      return std::filesystem::path {downloads.fileSystemRepresentation} / "Moonlight";
+    }
   }
 }  // namespace platf

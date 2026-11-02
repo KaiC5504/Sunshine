@@ -11,6 +11,7 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -1797,7 +1798,72 @@ namespace nvhttp {
     }
 
     const auto content_type = request->header.find("Content-Type");
-    write_clipboard_reply(response, clipboard_sync::handle_post(*backend, content_type == request->header.end() ? std::string_view {} : std::string_view {content_type->second}, request->content.string()));
+    write_clipboard_reply(
+      response,
+      clipboard_sync::handle_post(
+        *backend,
+        content_type == request->header.end() ? std::string_view {} : std::string_view {content_type->second},
+        request->content.string(),
+        platf::clipboard_transfer_directory()
+      )
+    );
+  }
+
+  /**
+   * @brief Send one of the files listed by a clipboard poll.
+   *
+   * Clients pass the `seq` reported with the file list and the file's `index`.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void clipboard_file_get(resp_https_t response, req_https_t request) {
+    auto *backend = authorize_clipboard(response, request);
+    if (!backend) {
+      return;
+    }
+
+    const auto args = request->parse_query_string();
+    const auto argument = [&args](const std::string &key) {
+      const auto value = args.find(key);
+      return value == args.end() ? std::nullopt : clipboard_sync::parse_sequence(value->second);
+    };
+    const auto lookup = clipboard_sync::find_file(*backend, argument("seq"), argument("index"));
+    if (lookup.status != 200) {
+      write_status(response, lookup.status);
+      return;
+    }
+
+    std::ifstream file {lookup.path, std::ios::binary};
+    if (!file) {
+      write_status(response, 404);
+      return;
+    }
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/octet-stream");
+    response->write(SimpleWeb::StatusCode::success_ok, file, headers);
+  }
+
+  /**
+   * @brief Save a file a streaming client sent to this host.
+   *
+   * The response body is the saved path, which the client can then put on the clipboard.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void files_post(resp_https_t response, req_https_t request) {
+    auto *backend = authorize_clipboard(response, request);
+    if (!backend) {
+      return;
+    }
+
+    const auto args = request->parse_query_string();
+    const auto name = args.find("name");
+    write_clipboard_reply(
+      response,
+      clipboard_sync::save_upload(platf::clipboard_transfer_directory(), name == args.end() ? std::string_view {} : std::string_view {name->second}, request->content.string())
+    );
   }
 
   /**
@@ -1956,6 +2022,8 @@ namespace nvhttp {
     https_server.resource["^/cancel$"]["GET"] = cancel;
     https_server.resource["^/actions/clipboard$"]["GET"] = clipboard_get;
     https_server.resource["^/actions/clipboard$"]["POST"] = clipboard_post;
+    https_server.resource["^/actions/clipboard/file$"]["GET"] = clipboard_file_get;
+    https_server.resource["^/actions/files$"]["POST"] = files_post;
     https_server.resource["^/actions/sessions$"]["GET"] = sessions;
     https_server.on_verified = remember_verified_connection;
 
