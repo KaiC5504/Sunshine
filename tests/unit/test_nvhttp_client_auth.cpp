@@ -136,6 +136,42 @@ TEST_F(ClientAuthorizationTest, MultipleClientsPersistAndUnpairIndependently) {
   EXPECT_FALSE(nvhttp::test_support::authorize_client_certificate(expired_credentials.x509));
 }
 
+TEST_F(ClientAuthorizationTest, ExtraPermissionsDefaultOffAndPersistIndependently) {
+  const auto credentials = test_utils::certificates::generate_ca_credentials("Sunshine Permission Client");
+  const auto uuid = nvhttp::test_support::add_client("permissions", credentials.x509, true);
+  ASSERT_FALSE(uuid.empty());
+
+  const auto client = [&uuid]() {
+    for (const auto &entry : nvhttp::get_all_clients()) {
+      if (entry["uuid"] == uuid) {
+        return entry;
+      }
+    }
+    return nlohmann::json {};
+  };
+  EXPECT_EQ(client()["clipboard"], false);
+  EXPECT_EQ(client()["view_sessions"], false);
+
+  ASSERT_TRUE(nvhttp::set_client_permissions(uuid, true, std::nullopt));
+  EXPECT_EQ(client()["clipboard"], true);
+  EXPECT_EQ(client()["view_sessions"], false);
+
+  ASSERT_TRUE(nvhttp::set_client_permissions(uuid, std::nullopt, true));
+  EXPECT_EQ(client()["clipboard"], true);
+  EXPECT_EQ(client()["view_sessions"], true);
+
+  nvhttp::test_support::reset_client_state();
+  nvhttp::test_support::reload_client_state();
+  EXPECT_EQ(client()["clipboard"], true);
+  EXPECT_EQ(client()["view_sessions"], true);
+  EXPECT_TRUE(nvhttp::test_support::authorize_client_certificate(credentials.x509));
+
+  ASSERT_TRUE(nvhttp::set_client_permissions(uuid, false, false));
+  EXPECT_EQ(client()["clipboard"], false);
+  EXPECT_EQ(client()["view_sessions"], false);
+  EXPECT_FALSE(nvhttp::set_client_permissions("missing", true, true));
+}
+
 TEST_F(ClientAuthorizationTest, DuplicateCertificateIdentityFailsClosed) {
   const auto credentials = test_utils::certificates::generate_ca_credentials();
   const auto uuid = nvhttp::test_support::add_client("first", credentials.x509, true);

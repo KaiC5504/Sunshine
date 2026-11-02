@@ -130,6 +130,10 @@ endif()
 
 list(APPEND PLATFORM_TARGET_FILES ${NVENC_SOURCES})
 
+if(NOT APPLE)
+    list(APPEND PLATFORM_TARGET_FILES "${CMAKE_SOURCE_DIR}/src/platform/clipboard_unsupported.cpp")
+endif()
+
 set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Input.h"
         "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Rtsp.h"
@@ -141,6 +145,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/upnp.cpp"
         "${CMAKE_SOURCE_DIR}/src/upnp.h"
         "${CMAKE_SOURCE_DIR}/src/cbs.cpp"
+        "${CMAKE_SOURCE_DIR}/src/clipboard_sync.cpp"
+        "${CMAKE_SOURCE_DIR}/src/clipboard_sync.h"
         "${CMAKE_SOURCE_DIR}/src/utility.h"
         "${CMAKE_SOURCE_DIR}/src/uuid.h"
         "${CMAKE_SOURCE_DIR}/src/config.h"

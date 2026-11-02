@@ -455,7 +455,23 @@
           <div class="flex-grow-1">
             {{ client.name !== "" ? client.name : $t('troubleshooting.unpair_single_unknown') }}
           </div>
-          <div class="form-check form-switch ms-2 mb-0">
+          <div class="form-check form-switch ms-2 mb-0" :title="$t('troubleshooting.client_clipboard_desc')">
+            <input class="form-check-input" type="checkbox" role="switch"
+                   :id="'clipboard-' + client.uuid"
+                   :checked="client.clipboard"
+                   :aria-checked="String(!!client.clipboard)"
+                   @change="updateClientPermission(client.uuid, 'clipboard', !client.clipboard)">
+            <label class="form-check-label small" :for="'clipboard-' + client.uuid">{{ $t('troubleshooting.client_clipboard') }}</label>
+          </div>
+          <div class="form-check form-switch ms-3 mb-0" :title="$t('troubleshooting.client_view_sessions_desc')">
+            <input class="form-check-input" type="checkbox" role="switch"
+                   :id="'sessions-' + client.uuid"
+                   :checked="client.view_sessions"
+                   :aria-checked="String(!!client.view_sessions)"
+                   @change="updateClientPermission(client.uuid, 'view_sessions', !client.view_sessions)">
+            <label class="form-check-label small" :for="'sessions-' + client.uuid">{{ $t('troubleshooting.client_view_sessions') }}</label>
+          </div>
+          <div class="form-check form-switch ms-3 mb-0">
             <input class="form-check-input" type="checkbox" role="switch"
                    :id="'toggle-' + client.uuid"
                    :checked="client.enabled"
@@ -923,6 +939,17 @@
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({ uuid, enabled })
+          }).then(() => {
+            this.refreshClients();
+          });
+        },
+        updateClientPermission(uuid, permission, value) {
+          fetch("./api/clients/update", {
+            method: "POST",
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ uuid, [permission]: value })
           }).then(() => {
             this.refreshClients();
           });

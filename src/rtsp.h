@@ -9,6 +9,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
 
 // local includes
 #include "crypto.h"
@@ -119,6 +122,19 @@ namespace rtsp_stream {
    * @return Count of active sessions.
    */
   int session_count();
+
+  /**
+   * @brief List the client certificates of sessions that are starting or running.
+   * @return PEM certificate of each active session, one entry per session.
+   */
+  std::vector<std::string> active_session_certs();
+
+  /**
+   * @brief Check whether a client has a session that is starting or running.
+   * @param cert PEM certificate of the client.
+   * @return `true` when the client is streaming.
+   */
+  bool has_active_session(std::string_view cert);
 
   /**
    * @brief Terminates all running streaming sessions.

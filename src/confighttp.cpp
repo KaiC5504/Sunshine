@@ -1341,9 +1341,13 @@ namespace confighttp {
    * @code{.json}
    * {
    *   "uuid": "<uuid>",
-   *   "enabled": true
+   *   "enabled": true,
+   *   "clipboard": false,
+   *   "view_sessions": false
    * }
    * @endcode
+   *
+   * Each of `enabled`, `clipboard` and `view_sessions` is optional; omitted permissions are left unchanged.
    *
    * @api_examples{/api/clients/update|:| POST|:| {"uuid":"<uuid>","enabled":true}}
    */
@@ -1367,20 +1371,38 @@ namespace confighttp {
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
       nlohmann::json output_tree;
       std::string uuid = input_tree.value("uuid", "");
-      bool enabled = input_tree.value("enabled", true);
-      output_tree["status"] = nvhttp::set_client_enabled(uuid, enabled);
-
-      if (!enabled && output_tree["status"]) {
-        auto cert = nvhttp::get_cert_by_uuid(uuid);
-        if (!cert.empty()) {
-          rtsp_stream::terminate_sessions_by_cert(cert);
+      const auto optional_flag = [&input_tree](const char *key) -> std::optional<bool> {
+        if (!input_tree.contains(key)) {
+          return std::nullopt;
         }
+        return input_tree.at(key).get<bool>();
+      };
+      const auto clipboard = optional_flag("clipboard");
+      const auto view_sessions = optional_flag("view_sessions");
 
-        if (rtsp_stream::session_count() == 0 && proc::proc.running() > 0) {
-          proc::proc.terminate();
+      bool status = true;
+      if (clipboard || view_sessions) {
+        status = nvhttp::set_client_permissions(uuid, clipboard, view_sessions);
+      }
+
+      // A permission-only update must not re-enable a disabled client through the `enabled` default.
+      if (input_tree.contains("enabled") || (!clipboard && !view_sessions)) {
+        bool enabled = input_tree.value("enabled", true);
+        status = nvhttp::set_client_enabled(uuid, enabled) && status;
+
+        if (!enabled && status) {
+          auto cert = nvhttp::get_cert_by_uuid(uuid);
+          if (!cert.empty()) {
+            rtsp_stream::terminate_sessions_by_cert(cert);
+          }
+
+          if (rtsp_stream::session_count() == 0 && proc::proc.running() > 0) {
+            proc::proc.terminate();
+          }
         }
       }
 
+      output_tree["status"] = status;
       send_response(response, output_tree);
     } catch (nlohmann::json::exception &e) {
       BOOST_LOG(warning) << "Update Client: "sv << e.what();

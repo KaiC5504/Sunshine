@@ -355,6 +355,15 @@ namespace nvhttp {
    * @return true if the client was found and updated.
    */
   bool set_client_enabled(std::string_view uuid, bool enabled);
+
+  /**
+   * @brief Change what a paired client may do beyond streaming.
+   * @param uuid The UUID of the client.
+   * @param clipboard New clipboard-sharing permission, or `std::nullopt` to keep the current one.
+   * @param view_sessions New permission to see who is streaming, or `std::nullopt` to keep the current one.
+   * @return true if the client was found and updated.
+   */
+  bool set_client_permissions(std::string_view uuid, std::optional<bool> clipboard, std::optional<bool> view_sessions);
   /**
    * @brief Get cert by UUID.
    *

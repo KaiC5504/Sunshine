@@ -10,6 +10,7 @@ extern "C" {
 }
 
 // standard includes
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <format>
@@ -590,6 +591,23 @@ namespace rtsp_stream {
       return (int) _session_slots->size();
     }
 
+    /**
+     * @brief List the client certificates of sessions that are starting or running.
+     * @return PEM certificate of each active session.
+     */
+    std::vector<std::string> active_session_certs() {
+      using enum stream::session::state_e;
+
+      std::vector<std::string> certs;
+      auto lg = _session_slots.lock();
+      for (const auto &slot : *_session_slots) {
+        if (const auto state = stream::session::state(*slot); state == STARTING || state == RUNNING) {
+          certs.push_back(stream::session::client_cert(*slot));
+        }
+      }
+      return certs;
+    }
+
     safe::event_t<std::shared_ptr<launch_session_t>> launch_event;  ///< Launch event.
 
     /**
@@ -705,6 +723,15 @@ namespace rtsp_stream {
     server.clear(false);
 
     return server.session_count();
+  }
+
+  std::vector<std::string> active_session_certs() {
+    return server.active_session_certs();
+  }
+
+  bool has_active_session(std::string_view cert) {
+    const auto certs = server.active_session_certs();
+    return std::ranges::find(certs, cert) != certs.end();
   }
 
   void terminate_sessions() {

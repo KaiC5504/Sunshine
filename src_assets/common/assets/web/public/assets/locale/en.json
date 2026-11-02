@@ -602,6 +602,10 @@
     "third_party_notice": "Third Party Notice"
   },
   "troubleshooting": {
+    "client_clipboard": "Clipboard",
+    "client_clipboard_desc": "Let this device copy and paste with this computer while it is streaming",
+    "client_view_sessions": "See who is connected",
+    "client_view_sessions_desc": "Let this device see which paired devices are streaming right now",
     "permissions_title": "Permissions",
     "permissions_desc": "Grant the access needed by your Sunshine configuration. Sunshine restarts after it detects all required access.",
     "permissions_refresh": "Refresh Permissions",

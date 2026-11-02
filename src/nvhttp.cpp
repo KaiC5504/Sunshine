@@ -12,7 +12,9 @@
 #include <filesystem>
 #include <format>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 // lib includes
@@ -24,6 +26,7 @@
 #include <Simple-Web-Server/server_http.hpp>
 
 // local includes
+#include "clipboard_sync.h"
 #include "config.h"
 #include "display_device.h"
 #include "file_handler.h"
@@ -83,6 +86,7 @@ namespace nvhttp {
     }
 
     std::function<int(SSL *)> verify;  ///< Callback that validates a client's TLS certificate after handshake.
+    std::function<void(const boost::asio::ip::tcp::endpoint &)> on_verified;  ///< Callback told which connection `verify` just accepted.
     std::function<void(std::shared_ptr<Response>, std::shared_ptr<Request>)> on_verify_failed;  ///< Handler used to return the pairing challenge when client verification fails.
 
   protected:
@@ -114,6 +118,12 @@ namespace nvhttp {
         if (verify && !verify(session->connection->socket->native_handle())) {
           this->write(session, on_verify_failed);
         } else {
+          if (verify && on_verified) {
+            SimpleWeb::error_code endpoint_ec;
+            if (const auto endpoint = session->connection->socket->lowest_layer().remote_endpoint(endpoint_ec); !endpoint_ec) {
+              on_verified(endpoint);
+            }
+          }
           this->read(session);
         }
       } else if (this->on_error) {
@@ -184,6 +194,8 @@ namespace nvhttp {
     std::string uuid;  ///< Persistent Moonlight client UUID associated with the certificate.
     std::string cert;  ///< Certificate PEM string or path.
     bool enabled = true;  ///< Whether this persisted client entry may connect.
+    bool clipboard = false;  ///< Whether this client may read and replace the host clipboard while streaming.
+    bool view_sessions = false;  ///< Whether this client may see which paired clients are streaming.
   };
 
   /**
@@ -290,6 +302,8 @@ namespace nvhttp {
       named_cert_node.put("cert"s, named_cert.cert);
       named_cert_node.put("uuid"s, named_cert.uuid);
       named_cert_node.put("enabled"s, named_cert.enabled);
+      named_cert_node.put("clipboard"s, named_cert.clipboard);
+      named_cert_node.put("view_sessions"s, named_cert.view_sessions);
       named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
     }
     root.add_child("root.named_devices"s, named_cert_nodes);
@@ -426,6 +440,8 @@ namespace nvhttp {
         named_cert.cert = el.get_child("cert").get_value<std::string>();
         named_cert.uuid = el.get_child("uuid").get_value<std::string>();
         named_cert.enabled = el.get<bool>("enabled", true);
+        named_cert.clipboard = el.get<bool>("clipboard", false);
+        named_cert.view_sessions = el.get<bool>("view_sessions", false);
         client.named_devices.emplace_back(named_cert);
       }
     }
@@ -1317,6 +1333,8 @@ namespace nvhttp {
       named_cert_node["name"] = named_cert.name;
       named_cert_node["uuid"] = named_cert.uuid;
       named_cert_node["enabled"] = named_cert.enabled;
+      named_cert_node["clipboard"] = named_cert.clipboard;
+      named_cert_node["view_sessions"] = named_cert.view_sessions;
       named_cert_nodes.push_back(named_cert_node);
     }
 
@@ -1624,6 +1642,203 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
+  /**
+   * @brief Client certificate accepted for one live HTTPS connection.
+   */
+  struct verified_connection_t {
+    std::string cert;  ///< PEM certificate the connection presented.
+    std::chrono::steady_clock::time_point last_used;  ///< When the connection last authenticated a request.
+  };
+
+  // Keyed by remote endpoint because `last_verified_client_cert` belongs to whichever handshake finished last,
+  // which is not necessarily the connection a later keep-alive request arrives on. Only the HTTPS server thread touches it.
+  std::unordered_map<std::string, verified_connection_t> verified_connections;  ///< Accepted client certificate per remote endpoint.  // NOSONAR(cpp:S5421): intentionally mutable global
+
+  /**
+   * @brief Format a remote endpoint as a `verified_connections` key.
+   *
+   * @param endpoint Remote TCP endpoint.
+   * @return Address and port of the endpoint.
+   */
+  std::string endpoint_key(const boost::asio::ip::tcp::endpoint &endpoint) {
+    return endpoint.address().to_string() + '|' + std::to_string(endpoint.port());
+  }
+
+  /**
+   * @brief Remember the client certificate a newly verified connection presented.
+   *
+   * @param endpoint Remote endpoint of the verified connection.
+   */
+  void remember_verified_connection(const boost::asio::ip::tcp::endpoint &endpoint) {
+    const auto now = std::chrono::steady_clock::now();
+    if (verified_connections.size() > 256) {
+      std::erase_if(verified_connections, [now](const auto &entry) {
+        return now - entry.second.last_used > 30min;
+      });
+    }
+    verified_connections[endpoint_key(endpoint)] = {last_verified_client_cert, now};
+  }
+
+  /**
+   * @brief Find the enabled paired client that sent a request.
+   *
+   * @param request HTTPS request whose connection presented a client certificate.
+   * @return Copy of the client's record, or `std::nullopt` when the connection is unknown or the client is disabled.
+   */
+  std::optional<named_cert_t> request_client(const req_https_t &request) {
+    const auto connection = verified_connections.find(endpoint_key(request->remote_endpoint()));
+    if (connection == verified_connections.end()) {
+      return std::nullopt;
+    }
+    connection->second.last_used = std::chrono::steady_clock::now();
+
+    std::lock_guard lock {client_auth_mutex()};
+    for (const auto &named_cert : client_root.named_devices) {
+      if (named_cert.cert == connection->second.cert && named_cert.enabled) {
+        return named_cert;
+      }
+    }
+    return std::nullopt;
+  }
+
+  /**
+   * @brief Write a plain-text status response.
+   *
+   * @param response HTTP response object to populate.
+   * @param status HTTP status code.
+   * @param message Human-readable explanation, empty for none.
+   */
+  void write_status(const resp_https_t &response, int status, std::string_view message = {}) {
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    if (!message.empty()) {
+      headers.emplace("Content-Type", "text/plain; charset=utf-8");
+    }
+    response->write(static_cast<SimpleWeb::StatusCode>(status), message, headers);
+  }
+
+  /**
+   * @brief Check that a request may use the host clipboard and open it.
+   *
+   * Clipboard access needs the per-device permission and an active stream from that device, so a paired
+   * client cannot read the clipboard in the background.
+   *
+   * @param response HTTP response that receives the error when access is denied.
+   * @param request HTTPS request to authorize.
+   * @return Native clipboard, or `nullptr` after an error response was written.
+   */
+  clipboard_sync::backend_t *authorize_clipboard(const resp_https_t &response, const req_https_t &request) {
+    const auto client = request_client(request);
+    if (!client) {
+      write_status(response, 401, "The client is not authorized."sv);
+      return nullptr;
+    }
+    if (!client->clipboard) {
+      write_status(response, 403, "Clipboard sharing is not enabled for this device in Sunshine."sv);
+      return nullptr;
+    }
+    if (!rtsp_stream::has_active_session(client->cert)) {
+      write_status(response, 409, "Clipboard sharing is only available while streaming."sv);
+      return nullptr;
+    }
+
+    static const auto backend = platf::make_clipboard();
+    if (!backend) {
+      write_status(response, 501, "Clipboard sharing is not supported on this host."sv);
+    }
+    return backend.get();
+  }
+
+  /**
+   * @brief Write a clipboard sync reply.
+   *
+   * @param response HTTP response object to populate.
+   * @param reply Reply produced by the clipboard sync handlers.
+   */
+  void write_clipboard_reply(const resp_https_t &response, const clipboard_sync::reply_t &reply) {
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    if (reply.sequence) {
+      headers.emplace(std::string {clipboard_sync::sequence_header}, std::to_string(*reply.sequence));
+    }
+    if (!reply.content_type.empty()) {
+      headers.emplace("Content-Type", reply.content_type);
+    }
+    response->write(static_cast<SimpleWeb::StatusCode>(reply.status), reply.body, headers);
+  }
+
+  /**
+   * @brief Send the host clipboard to a streaming client.
+   *
+   * Clients poll with `?since=<sequence>` and get 204 until the clipboard changes.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void clipboard_get(resp_https_t response, req_https_t request) {
+    auto *backend = authorize_clipboard(response, request);
+    if (!backend) {
+      return;
+    }
+
+    const auto args = request->parse_query_string();
+    const auto since = args.find("since");
+    write_clipboard_reply(response, clipboard_sync::handle_get(*backend, since == args.end() ? std::nullopt : clipboard_sync::parse_sequence(since->second)));
+  }
+
+  /**
+   * @brief Replace the host clipboard with contents from a streaming client.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void clipboard_post(resp_https_t response, req_https_t request) {
+    auto *backend = authorize_clipboard(response, request);
+    if (!backend) {
+      return;
+    }
+
+    const auto content_type = request->header.find("Content-Type");
+    write_clipboard_reply(response, clipboard_sync::handle_post(*backend, content_type == request->header.end() ? std::string_view {} : std::string_view {content_type->second}, request->content.string()));
+  }
+
+  /**
+   * @brief List the paired clients that are streaming right now.
+   *
+   * Only devices granted `view_sessions` may ask, so other users cannot see who is connected.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void sessions(resp_https_t response, req_https_t request) {
+    const auto client = request_client(request);
+    if (!client) {
+      write_status(response, 401, "The client is not authorized."sv);
+      return;
+    }
+    if (!client->view_sessions) {
+      write_status(response, 403, "Viewing active sessions is not enabled for this device in Sunshine."sv);
+      return;
+    }
+
+    nlohmann::json active = nlohmann::json::array();
+    const auto certs = rtsp_stream::active_session_certs();
+    {
+      std::lock_guard lock {client_auth_mutex()};
+      for (const auto &cert : certs) {
+        const auto named_cert = std::ranges::find(client_root.named_devices, cert, &named_cert_t::cert);
+        const bool known = named_cert != client_root.named_devices.end();
+        active.push_back({
+          {"name", known ? named_cert->name : "Unknown device"s},
+          {"uuid", known ? named_cert->uuid : ""s},
+          {"self", cert == client->cert},
+        });
+      }
+    }
+
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/json");
+    response->write(SimpleWeb::StatusCode::success_ok, nlohmann::json {{"sessions", active}}.dump(), headers);
+  }
+
   void setup(const std::string &pkey, const std::string &cert) {
     conf_intern.pkey = pkey;
     conf_intern.servercert = cert;
@@ -1739,6 +1954,10 @@ namespace nvhttp {
       resume(host_audio, resp, req);
     };
     https_server.resource["^/cancel$"]["GET"] = cancel;
+    https_server.resource["^/actions/clipboard$"]["GET"] = clipboard_get;
+    https_server.resource["^/actions/clipboard$"]["POST"] = clipboard_post;
+    https_server.resource["^/actions/sessions$"]["GET"] = sessions;
+    https_server.on_verified = remember_verified_connection;
 
     https_server.config.reuse_address = true;
     https_server.config.address = net::get_bind_address(address_family);
@@ -1813,6 +2032,19 @@ namespace nvhttp {
       if (named_cert.uuid == uuid) {
         named_cert.enabled = enabled;
         rebuild_client_cert_chain();
+        save_state();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool set_client_permissions(const std::string_view uuid, std::optional<bool> clipboard, std::optional<bool> view_sessions) {
+    std::lock_guard lock {client_auth_mutex()};
+    for (auto &named_cert : client_root.named_devices) {
+      if (named_cert.uuid == uuid) {
+        named_cert.clipboard = clipboard.value_or(named_cert.clipboard);
+        named_cert.view_sessions = view_sessions.value_or(named_cert.view_sessions);
         save_state();
         return true;
       }
