@@ -66,6 +66,11 @@ namespace clipboard_sync {
      * @return `true` when `path` resolves to a regular file below `directory`.
      */
     bool is_file_inside(const fs::path &directory, const fs::path &path) {
+      // weakly_canonical() turns an empty path into the working directory
+      if (directory.empty()) {
+        return false;
+      }
+
       std::error_code ec;
       const auto root = fs::weakly_canonical(directory, ec);
       if (ec || root.empty()) {
