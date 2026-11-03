@@ -82,8 +82,7 @@ namespace webui_cert {
     }
 
     bool expires_before(const X509 *cert, std::chrono::system_clock::time_point when) {
-      auto limit = std::chrono::system_clock::to_time_t(when);
-      return X509_cmp_time(X509_get0_notAfter(cert), &limit) <= 0;
+      return ASN1_TIME_cmp_time_t(X509_get0_notAfter(cert), std::chrono::system_clock::to_time_t(when)) <= 0;
     }
 
     bool set_serial(X509 *cert) {
@@ -271,15 +270,15 @@ namespace webui_cert {
       const auto *entry = sk_GENERAL_NAME_value(alt.get(), i);
       if (entry->type == GEN_DNS) {
         const auto *value = entry->d.dNSName;
-        names.dns.emplace_back(reinterpret_cast<const char *>(ASN1_STRING_get0_data(value)), ASN1_STRING_length(value));
+        names.dns.emplace_back(reinterpret_cast<const char *>(ASN1_STRING_get0_data(value)), ASN1_STRING_get_length(value));
       } else if (entry->type == GEN_IPADD) {
         const auto *value = entry->d.iPAddress;
         const auto *data = ASN1_STRING_get0_data(value);
-        if (ASN1_STRING_length(value) == 4) {
+        if (ASN1_STRING_get_length(value) == 4) {
           boost::asio::ip::address_v4::bytes_type bytes;
           std::copy_n(data, bytes.size(), bytes.begin());
           names.ips.push_back(boost::asio::ip::address_v4 {bytes}.to_string());
-        } else if (ASN1_STRING_length(value) == 16) {
+        } else if (ASN1_STRING_get_length(value) == 16) {
           boost::asio::ip::address_v6::bytes_type bytes;
           std::copy_n(data, bytes.size(), bytes.begin());
           names.ips.push_back(boost::asio::ip::address_v6 {bytes}.to_string());

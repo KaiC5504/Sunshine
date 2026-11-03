@@ -1,14 +1,11 @@
 ---
-# Builds the personal macOS fork on every push to `personal` (signed once the Developer ID
-# certificate exists) and publishes a signed, notarized GitHub release when run manually with
-# `release` checked. Signing secrets live in the `testflight` environment; see ci-macos.yml.
+# Builds the personal macOS fork only when run manually (day-to-day builds happen on the Mac with
+# personal-mac/dev-build.sh) and publishes a signed, notarized GitHub release when `release` is
+# checked. Signing secrets live in the `testflight` environment; see ci-macos.yml.
 name: Personal macOS
 permissions: {}
 
 on:
-  push:
-    branches:
-      - personal
   workflow_dispatch:
     inputs:
       release:

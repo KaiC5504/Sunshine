@@ -12,6 +12,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <string_view>
 
 // lib includes
 #include <boost/asio/ip/address.hpp>
@@ -113,9 +114,11 @@ TEST(WebUICertTest, AuthorityIsANameConstrainedCa) {
   EXPECT_EQ(X509_check_ca(cert.get()), 1);
   EXPECT_NE(X509_get_ext_by_NID(cert.get(), NID_name_constraints, -1), -1);
 
-  char common_name[128] {};
-  X509_NAME_get_text_by_NID(X509_get_subject_name(cert.get()), NID_commonName, common_name, sizeof(common_name));
-  EXPECT_STREQ(common_name, "Sunshine Local CA (weis-mac-mini)");
+  const auto *subject = X509_get_subject_name(cert.get());
+  const auto index = X509_NAME_get_index_by_NID(subject, NID_commonName, -1);
+  ASSERT_NE(index, -1);
+  const auto *common_name = X509_NAME_ENTRY_get_data(X509_NAME_get_entry(subject, index));
+  EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(ASN1_STRING_get0_data(common_name)), ASN1_STRING_get_length(common_name)), "Sunshine Local CA (weis-mac-mini)");
 }
 
 TEST(WebUICertTest, IssuedCertificateIsTrustedThroughTheAuthority) {

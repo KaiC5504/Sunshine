@@ -59,6 +59,15 @@ export LIBRARY_PATH="$icu4c_root/lib"
 # Built for this Mac only, so target its own macOS like the Homebrew libraries it links.
 export MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | cut -d. -f1).0"
 
+# A release-style version, so the web UI doesn't offer releases from before this build as updates.
+# Day granularity: the version is a compile definition, and changing it rebuilds everything.
+export BRANCH=personal
+export BUILD_VERSION="$(date -u +%Y.%-m%d).0"
+# Same -Werror as the release workflow, so a release never fails on a warning seen here first.
+settings=(-DBUILD_WERROR=ON)
+[[ -z "$identity" ]] || settings+=(-DAPPLE_CODESIGN_IDENTITY="$identity")
+stamp="$BUILD_DIR/dev-build-settings"
+
 if [[ ! -f "$BUILD_DIR/build.ninja" ]]; then
   step "Configuring"
   cmake -G Ninja -B "$BUILD_DIR" -S . \
@@ -69,12 +78,14 @@ if [[ ! -f "$BUILD_DIR/build.ninja" ]]; then
     -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@4)" \
     -DOpus_ROOT_DIR="$(brew --prefix opus)" \
     -DQt6_DIR="$(brew --prefix qtbase)/lib/cmake/Qt6" \
-    -DQt6Svg_DIR="$(brew --prefix qtsvg)/lib/cmake/Qt6Svg"
+    -DQt6Svg_DIR="$(brew --prefix qtsvg)/lib/cmake/Qt6Svg" \
+    "${settings[@]}"
+elif [[ "$(cat "$stamp" 2>/dev/null)" != "$BUILD_VERSION ${settings[*]}" ]]; then
+  # CMake doesn't notice environment changes by itself, and reconfiguring every time costs seconds.
+  step "Reconfiguring"
+  cmake -B "$BUILD_DIR" "${settings[@]}" >/dev/null
 fi
-# Kept in the cache, so it only reconfigures when the identity changes.
-if [[ -n "$identity" ]]; then
-  cmake -B "$BUILD_DIR" -DAPPLE_CODESIGN_IDENTITY="$identity" >/dev/null
-fi
+echo "$BUILD_VERSION ${settings[*]}" > "$stamp"
 
 step "Building"
 cmake --build "$BUILD_DIR" --target sunshine web-ui
