@@ -20,6 +20,7 @@
 
 // local includes
 #include <src/network.h>
+#include <src/rtsp.h>
 #include <src/stream.h>
 
 namespace stream {
