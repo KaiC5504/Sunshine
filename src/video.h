@@ -320,6 +320,25 @@ namespace video {
   };
 
   /**
+   * @brief Pixel formats for the native VideoToolbox encoder.
+   */
+  struct encoder_platform_formats_videotoolbox: encoder_platform_formats_t {
+    /**
+     * @brief Construct VideoToolbox platform format mappings.
+     *
+     * @param format_8bit Platform 8-bit pixel format.
+     * @param format_10bit Platform 10-bit pixel format.
+     */
+    encoder_platform_formats_videotoolbox(const platf::pix_fmt_e &format_8bit, const platf::pix_fmt_e &format_10bit) {
+      encoder_platform_formats_t::dev_type = platf::mem_type_e::videotoolbox;
+      encoder_platform_formats_t::pix_fmt_8bit = format_8bit;
+      encoder_platform_formats_t::pix_fmt_10bit = format_10bit;
+      encoder_platform_formats_t::pix_fmt_yuv444_8bit = platf::pix_fmt_e::unknown;
+      encoder_platform_formats_t::pix_fmt_yuv444_10bit = platf::pix_fmt_e::unknown;
+    }
+  };
+
+  /**
    * @brief Encoder name and feature flags advertised by Sunshine.
    */
   struct encoder_t {
@@ -486,6 +505,15 @@ namespace video {
      * @param last_frame Last frame.
      */
     virtual void invalidate_ref_frames(int64_t first_frame, int64_t last_frame) = 0;
+
+    /**
+     * @brief Report whether packets are queued after encode returns, from an encoder callback.
+     *
+     * @return True when packets arrive asynchronously; false when encode queues them itself.
+     */
+    virtual bool emits_packets_asynchronously() const {
+      return false;
+    }
   };
 
   // encoders

@@ -684,6 +684,10 @@ namespace platf {
     nvenc::nvenc_encoder *nvenc = nullptr;  ///< NVENC encoder instance owned by the encode device.
   };
 
+#ifdef __APPLE__
+  class videotoolbox_encode_device_t;
+#endif
+
   /**
    * @brief Enumerates supported capture options.
    */
@@ -768,6 +772,18 @@ namespace platf {
     virtual std::unique_ptr<nvenc_encode_device_t> make_nvenc_encode_device(pix_fmt_e pix_fmt) {
       return nullptr;
     }
+
+#ifdef __APPLE__
+    /**
+     * @brief Create an encode device for the native VideoToolbox encoder.
+     *
+     * @param pix_fmt Sunshine pixel format for the encoder input.
+     * @return Constructed VideoToolbox encode device object, or null when unsupported.
+     */
+    virtual std::unique_ptr<videotoolbox_encode_device_t> make_videotoolbox_encode_device(pix_fmt_e pix_fmt) {
+      return nullptr;
+    }
+#endif
 
     /**
      * @brief Report whether the active display mode is HDR.

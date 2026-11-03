@@ -22,7 +22,6 @@
 #include "src/platform/macos/av_img_t.h"
 #include "src/platform/macos/av_video.h"
 #include "src/platform/macos/misc.h"
-#include "src/platform/macos/nv12_zero_device.h"
 #import "src/platform/macos/sc_capture.h"
 #include "src/platform/macos/sc_capture_loop.h"
 #include "src/utility.h"
@@ -33,6 +32,7 @@
  * @brief Macro for AV media type.
  */
 #define AVMediaType AVMediaType_FFmpeg
+#include "src/platform/macos/videotoolbox.h"
 #include "src/video.h"
 #undef AVMediaType
 
@@ -409,29 +409,36 @@ namespace platf {
      * @return Constructed AVCodec encode device object.
      */
     std::unique_ptr<avcodec_encode_device_t> make_avcodec_encode_device(pix_fmt_e pix_fmt) override {
-      if (pix_fmt == pix_fmt_e::yuv420p) {
-        av_capture.pixelFormat = kCVPixelFormatType_32BGRA;
-
-        return std::make_unique<avcodec_encode_device_t>();
-      } else if (pix_fmt == pix_fmt_e::nv12 || pix_fmt == pix_fmt_e::p010) {
-        auto device = std::make_unique<nv12_zero_device>();
-
-        auto *capture = av_capture;
-        device->init(
-          pix_fmt,
-          [capture](int width, int height) {
-            [capture setFrameWidth:width frameHeight:height];
-          },
-          [capture](int pixel_format) {
-            capture.pixelFormat = pixel_format;
-          }
-        );
-
-        return device;
-      } else {
+      if (pix_fmt != pix_fmt_e::yuv420p) {
         BOOST_LOG(error) << "Unsupported Pixel Format."sv;
         return nullptr;
       }
+
+      av_capture.pixelFormat = kCVPixelFormatType_32BGRA;
+      return std::make_unique<avcodec_encode_device_t>();
+    }
+
+    /**
+     * @brief Create an encode device for the native VideoToolbox encoder.
+     *
+     * @param pix_fmt Sunshine pixel format for the encoder input.
+     * @return Constructed VideoToolbox encode device object, or null when unsupported.
+     */
+    std::unique_ptr<videotoolbox_encode_device_t> make_videotoolbox_encode_device(pix_fmt_e pix_fmt) override {
+      auto device = std::make_unique<videotoolbox_encode_device_t>();
+
+      auto *capture = av_capture;
+      const auto status = device->init(
+        pix_fmt,
+        [capture](int width, int height) {
+          [capture setFrameWidth:width frameHeight:height];
+        },
+        [capture](OSType pixel_format) {
+          capture.pixelFormat = pixel_format;
+        }
+      );
+
+      return status ? nullptr : std::move(device);
     }
 
     /**
@@ -525,29 +532,36 @@ namespace platf {
      * @return Constructed AVCodec encode device object.
      */
     std::unique_ptr<avcodec_encode_device_t> make_avcodec_encode_device(pix_fmt_e pix_fmt) override {
-      if (pix_fmt == pix_fmt_e::yuv420p) {
-        sc_capture.pixelFormat = kCVPixelFormatType_32BGRA;
-
-        return std::make_unique<avcodec_encode_device_t>();
-      } else if (pix_fmt == pix_fmt_e::nv12 || pix_fmt == pix_fmt_e::p010) {
-        auto device = std::make_unique<nv12_zero_device>();
-
-        auto *capture = sc_capture;
-        device->init(
-          pix_fmt,
-          [capture](int width, int height) {
-            [capture setFrameWidth:width frameHeight:height];
-          },
-          [capture](int pixel_format) {
-            capture.pixelFormat = pixel_format;
-          }
-        );
-
-        return device;
-      } else {
+      if (pix_fmt != pix_fmt_e::yuv420p) {
         BOOST_LOG(error) << "Unsupported Pixel Format."sv;
         return nullptr;
       }
+
+      sc_capture.pixelFormat = kCVPixelFormatType_32BGRA;
+      return std::make_unique<avcodec_encode_device_t>();
+    }
+
+    /**
+     * @brief Create an encode device for the native VideoToolbox encoder.
+     *
+     * @param pix_fmt Sunshine pixel format for the encoder input.
+     * @return Constructed VideoToolbox encode device object, or null when unsupported.
+     */
+    std::unique_ptr<videotoolbox_encode_device_t> make_videotoolbox_encode_device(pix_fmt_e pix_fmt) override {
+      auto device = std::make_unique<videotoolbox_encode_device_t>();
+
+      auto *capture = sc_capture;
+      const auto status = device->init(
+        pix_fmt,
+        [capture](int width, int height) {
+          [capture setFrameWidth:width frameHeight:height];
+        },
+        [capture](OSType pixel_format) {
+          capture.pixelFormat = pixel_format;
+        }
+      );
+
+      return status ? nullptr : std::move(device);
     }
 
     /**
