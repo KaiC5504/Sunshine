@@ -94,6 +94,41 @@ Open the Sunshine web UI (`https://<mac-ip>:47990`) > Troubleshooting > the pair
 
 Both are off for every device until you turn them on. The badge shows the device name entered when it was paired.
 
+## Without a screen: SSH
+
+Turn these on once from the Mac's Terminal (Cmd+Space, type `Terminal`, Return):
+
+```bash
+sudo systemsetup -setremotelogin on        # SSH. If it asks for Full Disk Access, use the next line instead.
+sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist
+sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist   # VNC fallback when Sunshine is down
+sudo pmset -a sleep 0 womp 1 autorestart 1  # never sleep, wake on network, restart after a power cut
+```
+
+Sunshine only runs once someone is logged in, so a reboot leaves it off until you log in. Automatic login
+(System Settings > Users & Groups) fixes that, but macOS doesn't offer it while FileVault is on.
+
+From Windows, `ssh <mac user>@<mac name>.local`. To log in with a key instead of the password, in PowerShell:
+
+```powershell
+ssh-keygen -t ed25519
+Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub | ssh <mac user>@<mac name>.local "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+Keep SSH on the home network: don't forward port 22 on the router.
+
+**Pairing a device over SSH.** The web UI works from any laptop's browser at `https://<mac-ip>:47990`, so no screen
+is needed for pairing. To do it from SSH instead, fetch the helper once on the Mac:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/KaiC5504/Sunshine/personal/personal-mac/sunshine-pair.sh
+```
+
+Start pairing in Moonlight, leave its PIN showing, then run `bash sunshine-pair.sh` on the Mac and type the PIN.
+Moonlight's "A pairing session with this uniqueid already exists (Error 409)" means an earlier pairing attempt
+from that device is still waiting for its PIN; `bash sunshine-pair.sh --cancel` clears it (it also clears itself
+after 5 minutes).
+
 ## How it behaves
 
 - Only things copied after a stream starts are shared. Copying something on one side replaces the clipboard on the other.
