@@ -63,6 +63,7 @@
 #include "utility.h"
 #include "uuid.h"
 #include "webui_cert.h"
+#include "webui_remember.h"
 
 using namespace std::literals;
 
@@ -137,6 +138,15 @@ namespace confighttp {
       return path_provider;
     }
 #endif
+
+    /**
+     * @brief Locate the store of browsers that skip the sign-in prompt.
+     *
+     * @return Store next to the configured credentials file.
+     */
+    fs::path remembered_browsers_file() {
+      return webui_remember::store_file(config::sunshine.credentials_file);
+    }
   }  // namespace
 
   /**
@@ -572,7 +582,8 @@ namespace confighttp {
     BOOST_LOG(debug) << "DESTINATION :: "sv << request->path;
 
     for (auto &[name, val] : request->header) {
-      BOOST_LOG(debug) << name << " -- " << (name == "Authorization" ? "CREDENTIALS REDACTED" : val);
+      const auto secret = boost::iequals(name, "Authorization") || boost::iequals(name, "Cookie");
+      BOOST_LOG(debug) << name << " -- " << (secret ? "CREDENTIALS REDACTED" : val);
     }
 
     BOOST_LOG(debug) << " [--] "sv;
@@ -659,6 +670,12 @@ namespace confighttp {
     if (config::sunshine.username.empty()) {
       send_redirect(response, request, "/welcome");
       return false;
+    }
+
+    if (const auto cookies = request->header.find("cookie"); cookies != request->header.end()) {
+      if (const auto token = webui_remember::token_from_cookies(cookies->second); token && webui_remember::is_remembered(remembered_browsers_file(), *token, std::chrono::system_clock::now())) {
+        return true;
+      }
     }
 
     auto fg = util::fail_guard([&]() {
@@ -1754,6 +1771,98 @@ namespace confighttp {
     response->write(SimpleWeb::StatusCode::success_ok, authority, headers);
   }
 
+  namespace {
+    /**
+     * @brief Send a successful status response that sets or clears the remembered-browser cookie.
+     *
+     * @param response The HTTP response object.
+     * @param cookie Value for the Set-Cookie header.
+     */
+    void send_cookie_response(const resp_https_t &response, const std::string &cookie) {
+      SimpleWeb::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", "application/json");
+      headers.emplace("Set-Cookie", cookie);
+      headers.emplace("X-Frame-Options", "DENY");
+      headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+      response->write(nlohmann::json {{"status", true}}.dump(), headers);
+    }
+  }  // namespace
+
+  /**
+   * @brief Report whether this browser is remembered, and how many browsers are.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/remembered-browsers|:| GET|:| null}
+   */
+  void getRememberedBrowsers(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    const auto now = std::chrono::system_clock::now();
+    const auto cookies = request->header.find("cookie");
+    const auto token = cookies == request->header.end() ? std::nullopt : webui_remember::token_from_cookies(cookies->second);
+
+    nlohmann::json output_tree;
+    output_tree["this_browser"] = token && webui_remember::is_remembered(remembered_browsers_file(), *token, now);
+    output_tree["count"] = webui_remember::count(remembered_browsers_file(), now);
+    send_response(response, output_tree);
+  }
+
+  /**
+   * @brief Remember this browser, so it opens the web UI without the sign-in prompt.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/remembered-browsers|:| POST|:| null}
+   */
+  void rememberBrowser(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    if (!validate_csrf_token(response, request, get_client_id(request))) {
+      return;
+    }
+
+    print_req(request);
+
+    const auto token = webui_remember::remember(remembered_browsers_file(), std::chrono::system_clock::now());
+    if (token.empty()) {
+      bad_request(response, "Couldn't save the remembered browser");
+      return;
+    }
+    send_cookie_response(response, webui_remember::set_cookie(token));
+  }
+
+  /**
+   * @brief Forget every remembered browser, so each one has to sign in again.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/remembered-browsers/forget|:| POST|:| null}
+   */
+  void forgetBrowsers(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    if (!validate_csrf_token(response, request, get_client_id(request))) {
+      return;
+    }
+
+    print_req(request);
+
+    if (!webui_remember::forget_all(remembered_browsers_file())) {
+      bad_request(response, "Couldn't forget the remembered browsers");
+      return;
+    }
+    send_cookie_response(response, webui_remember::set_cookie({}));
+  }
+
   /**
    * @brief Get the logs from the log file.
    * @param response The HTTP response object.
@@ -2585,6 +2694,9 @@ namespace confighttp {
     server.resource["^/api/reset-portal-token$"]["POST"] = resetPortalToken;
     server.resource["^/api/restart$"]["POST"] = restart;
     server.resource["^/api/webui-authority$"]["GET"] = getWebUIAuthority;
+    server.resource["^/api/remembered-browsers$"]["GET"] = getRememberedBrowsers;
+    server.resource["^/api/remembered-browsers$"]["POST"] = rememberBrowser;
+    server.resource["^/api/remembered-browsers/forget$"]["POST"] = forgetBrowsers;
     server.resource["^/api/permissions$"]["GET"] = getPermissions;
     server.resource["^/api/permissions/request$"]["POST"] = requestPermission;
     server.resource["^/api/virtual-input/license$"]["GET"] = getVirtualInputLicense;

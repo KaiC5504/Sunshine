@@ -400,6 +400,31 @@
         </div>
       </div>
     </div>
+    <!-- Skip the sign-in prompt on this browser -->
+    <div class="card my-4">
+      <div class="card-body">
+        <h2 id="remember_browser">{{ $t('troubleshooting.remember_browser') }}</h2>
+        <p>{{ $t('troubleshooting.remember_browser_desc') }}</p>
+        <div class="alert alert-success" v-if="rememberedBrowsers.thisBrowser">
+          <check-circle :size="18" class="icon"></check-circle>
+          {{ $t('troubleshooting.remember_browser_remembered') }}
+        </div>
+        <div class="alert alert-danger" v-if="rememberedBrowsers.error">
+          <x-circle :size="18" class="icon"></x-circle>
+          {{ $t('troubleshooting.remember_browser_error') }}
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <button class="btn btn-primary" :disabled="rememberedBrowsers.busy || rememberedBrowsers.thisBrowser" @click="rememberBrowser">
+            <key-round :size="18" class="icon"></key-round>
+            {{ $t('troubleshooting.remember_browser') }}
+          </button>
+          <button class="btn btn-danger" :disabled="rememberedBrowsers.busy || rememberedBrowsers.count === 0" @click="forgetBrowsers">
+            <trash-2 :size="18" class="icon"></trash-2>
+            {{ $t('troubleshooting.remember_browser_forget', { count: rememberedBrowsers.count }) }}
+          </button>
+        </div>
+      </div>
+    </div>
     <!-- Reset XDG Portal restore token -->
     <div class="card my-4" v-if="platform === 'linux' || platform === 'freebsd'">
       <div class="card-body">
@@ -627,6 +652,12 @@
           permissionBusy: '',
           permissionError: '',
           permissionHelp: '',
+          rememberedBrowsers: {
+            busy: false,
+            count: 0,
+            error: false,
+            thisBrowser: false,
+          },
           restartPressed: false,
           showApplyMessage: false,
           platform: "",
@@ -859,6 +890,7 @@
         }, 5000);
         this.refreshLogs();
         this.refreshClients();
+        this.refreshRememberedBrowsers();
       },
       beforeUnmount() {
         clearInterval(this.logInterval);
@@ -1003,6 +1035,36 @@
           }).catch((err) => {
             console.error('Failed to copy logs:', err);
           });
+        },
+        /** Refresh whether this browser skips the sign-in prompt. */
+        async refreshRememberedBrowsers() {
+          try {
+            const status = await fetch("./api/remembered-browsers").then((r) => r.json());
+            this.rememberedBrowsers.thisBrowser = status.this_browser;
+            this.rememberedBrowsers.count = status.count;
+          } catch (e) {
+            console.error("Failed to fetch remembered browsers:", e);
+          }
+        },
+        /** Remember or forget browsers, then show the new state. */
+        async changeRememberedBrowsers(url) {
+          this.rememberedBrowsers.busy = true;
+          this.rememberedBrowsers.error = false;
+          try {
+            const response = await apiFetch(url, {method: "POST"});
+            this.rememberedBrowsers.error = !response.ok;
+          } catch (e) {
+            console.error("Failed to change remembered browsers:", e);
+            this.rememberedBrowsers.error = true;
+          }
+          await this.refreshRememberedBrowsers();
+          this.rememberedBrowsers.busy = false;
+        },
+        rememberBrowser() {
+          return this.changeRememberedBrowsers("./api/remembered-browsers");
+        },
+        forgetBrowsers() {
+          return this.changeRememberedBrowsers("./api/remembered-browsers/forget");
         },
         restart() {
           this.restartPressed = true;

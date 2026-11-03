@@ -107,6 +107,7 @@ protected:
   std::string saved_password;
   std::string saved_salt;
   std::string saved_locale;
+  std::string saved_credentials_file;
   std::vector<std::string> saved_csrf_allowed_origins;
   std::filesystem::path test_web_dir;
   std::filesystem::path cert_file;
@@ -134,6 +135,7 @@ protected:
     saved_password = config::sunshine.password;
     saved_salt = config::sunshine.salt;
     saved_locale = config::sunshine.locale;
+    saved_credentials_file = config::sunshine.credentials_file;
     saved_csrf_allowed_origins = config::sunshine.csrf_allowed_origins;
 
     // Set up test credentials
@@ -155,6 +157,8 @@ protected:
     // Create test web directory in temp
     test_web_dir = std::filesystem::temp_directory_path() / "sunshine_test_confighttp";  // NOSONAR(cpp:S5443): safe for tests
     std::filesystem::create_directories(test_web_dir / "web");
+    // Keeps remembered browsers in the temporary directory.
+    config::sunshine.credentials_file = (test_web_dir / "sunshine_state.json").string();
     confighttp::set_portal_token_path_provider_for_testing([this]() {
       return test_web_dir / "portal_token";
     });
@@ -338,6 +342,9 @@ protected:
     server->resource["^/virtual-input-license-test$"]["POST"] = confighttp::updateVirtualInputLicense;
     server->resource["^/permissions-test$"]["GET"] = confighttp::getPermissions;
     server->resource["^/webui-authority-test$"]["GET"] = confighttp::getWebUIAuthority;
+    server->resource["^/remembered-browsers-test$"]["GET"] = confighttp::getRememberedBrowsers;
+    server->resource["^/remembered-browsers-test$"]["POST"] = confighttp::rememberBrowser;
+    server->resource["^/remembered-browsers-test/forget$"]["POST"] = confighttp::forgetBrowsers;
     server->resource["^/permissions-test$"]["POST"] = confighttp::requestPermission;
     server->resource["^/pairing-test$"]["DELETE"] = confighttp::cancelPairing;
     server->resource["^/pairing-test$"]["GET"] = confighttp::getPendingPairings;
@@ -384,6 +391,7 @@ protected:
     config::sunshine.password = saved_password;
     config::sunshine.salt = saved_salt;
     config::sunshine.locale = saved_locale;
+    config::sunshine.credentials_file = saved_credentials_file;
     config::sunshine.csrf_allowed_origins = saved_csrf_allowed_origins;
     nvhttp::expire_pair_sessions(std::chrono::steady_clock::time_point::max());
 
@@ -2102,3 +2110,69 @@ TEST_F(BrowseDirectoryTest, GetWindowsDrives_EntriesHaveCorrectFormat) {
   }
 }
 #endif
+
+TEST_F(ConfigHttpTest, RememberedBrowsersRequireAuthentication) {
+  EXPECT_EQ(client->request("GET", "/remembered-browsers-test")->status_code, "401 Unauthorized");
+  EXPECT_EQ(client->request("POST", "/remembered-browsers-test")->status_code, "401 Unauthorized");
+  EXPECT_EQ(client->request("POST", "/remembered-browsers-test/forget")->status_code, "401 Unauthorized");
+}
+
+TEST_F(ConfigHttpTest, RememberBrowserSetsACookieThatSkipsSignIn) {
+  SimpleWeb::CaseInsensitiveMultimap headers;
+  headers.emplace("Authorization", create_auth_header("testuser", "testpass"));
+
+  const auto response = client->request("POST", "/remembered-browsers-test", "", headers);
+  ASSERT_EQ(response->status_code, "200 OK");
+  assert_security_headers(response);
+  const auto set_cookie = response->header.find("Set-Cookie");
+  ASSERT_NE(set_cookie, response->header.end());
+  EXPECT_TRUE(set_cookie->second.starts_with("sunshine_remember="));
+  EXPECT_NE(set_cookie->second.find("HttpOnly"), std::string::npos);
+  EXPECT_NE(set_cookie->second.find("Secure"), std::string::npos);
+  EXPECT_NE(set_cookie->second.find("SameSite=Strict"), std::string::npos);
+
+  SimpleWeb::CaseInsensitiveMultimap cookie_headers;
+  cookie_headers.emplace("Cookie", set_cookie->second.substr(0, set_cookie->second.find(';')));
+  const auto status = client->request("GET", "/remembered-browsers-test", "", cookie_headers);
+  ASSERT_EQ(status->status_code, "200 OK");
+  const auto body = nlohmann::json::parse(status->content.string());
+  EXPECT_TRUE(body["this_browser"].get<bool>());
+  EXPECT_EQ(body["count"].get<int>(), 1);
+  EXPECT_EQ(client->request("GET", "/auth-test", "", cookie_headers)->status_code, "200 OK");
+}
+
+TEST_F(ConfigHttpTest, UnknownRememberedBrowserCookieStillNeedsSignIn) {
+  SimpleWeb::CaseInsensitiveMultimap headers;
+  headers.emplace("Cookie", "sunshine_remember=unknown");
+
+  EXPECT_EQ(client->request("GET", "/auth-test", "", headers)->status_code, "401 Unauthorized");
+}
+
+TEST_F(ConfigHttpTest, SignedInBrowserIsNotRememberedUntilAsked) {
+  SimpleWeb::CaseInsensitiveMultimap headers;
+  headers.emplace("Authorization", create_auth_header("testuser", "testpass"));
+
+  const auto status = client->request("GET", "/remembered-browsers-test", "", headers);
+  ASSERT_EQ(status->status_code, "200 OK");
+  const auto body = nlohmann::json::parse(status->content.string());
+  EXPECT_FALSE(body["this_browser"].get<bool>());
+  EXPECT_EQ(body["count"].get<int>(), 0);
+}
+
+TEST_F(ConfigHttpTest, ForgetBrowsersSignsRememberedBrowsersOut) {
+  SimpleWeb::CaseInsensitiveMultimap headers;
+  headers.emplace("Authorization", create_auth_header("testuser", "testpass"));
+  const auto remembered = client->request("POST", "/remembered-browsers-test", "", headers);
+  const auto set_cookie = remembered->header.find("Set-Cookie");
+  ASSERT_NE(set_cookie, remembered->header.end());
+  SimpleWeb::CaseInsensitiveMultimap cookie_headers;
+  cookie_headers.emplace("Cookie", set_cookie->second.substr(0, set_cookie->second.find(';')));
+
+  const auto response = client->request("POST", "/remembered-browsers-test/forget", "", cookie_headers);
+  ASSERT_EQ(response->status_code, "200 OK");
+  const auto cleared = response->header.find("Set-Cookie");
+  ASSERT_NE(cleared, response->header.end());
+  EXPECT_TRUE(cleared->second.starts_with("sunshine_remember=; Max-Age=0"));
+
+  EXPECT_EQ(client->request("GET", "/auth-test", "", cookie_headers)->status_code, "401 Unauthorized");
+}

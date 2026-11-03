@@ -31,6 +31,7 @@
 #include "rtsp.h"
 #include "utility.h"
 #include "uuid.h"
+#include "webui_remember.h"
 
 namespace http {
   using namespace std::literals;
@@ -105,6 +106,9 @@ namespace http {
       BOOST_LOG(error) << "error writing to the credentials file, perhaps try this again as an administrator? Details: "sv << e.what();
       return -1;
     }
+
+    // Browsers remembered under the old credentials must sign in again.
+    webui_remember::forget_all(webui_remember::store_file(file));
 
     BOOST_LOG(info) << "New credentials have been created"sv;
     return 0;

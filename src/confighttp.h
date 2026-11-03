@@ -108,6 +108,30 @@ namespace confighttp {
   void set_webui_authority_file(const std::filesystem::path &path);
 
   /**
+   * @brief Report whether this browser skips the sign-in prompt, and how many browsers do.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void getRememberedBrowsers(const resp_https_t &response, const req_https_t &request);
+
+  /**
+   * @brief Remember the requesting browser, so it opens the web UI without the sign-in prompt.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void rememberBrowser(const resp_https_t &response, const req_https_t &request);
+
+  /**
+   * @brief Forget every remembered browser.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void forgetBrowsers(const resp_https_t &response, const req_https_t &request);
+
+  /**
    * @brief List authenticated pairing requests awaiting operator approval.
    *
    * @param response HTTP response object to populate.
