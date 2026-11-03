@@ -13,6 +13,7 @@
   #include <cstring>
   #include <memory>
   #include <optional>
+  #include <utility>
   #include <vector>
 
   // platform includes
@@ -105,7 +106,7 @@ namespace {
    * @brief Read chroma_format_idc from an HEVC SPS NAL unit.
    *
    * @param nal SPS NAL unit, including its two-byte header.
-   * @return chroma_format_idc: 1 for 4:2:0, 3 for 4:4:4; -1 when the SPS has sub-layers this reader skips.
+   * @return chroma_format_idc: 1 for 4:2:0, 3 for 4:4:4.
    */
   int hevc_chroma_format_idc(const std::vector<uint8_t> &nal) {
     std::vector<uint8_t> rbsp;
@@ -134,12 +135,29 @@ namespace {
       return (1 << zeros) - 1 + value;
     };
 
-    if ((rbsp[2] >> 1) & 7) {
-      return -1;
+    // NAL header and sps_video_parameter_set_id.
+    bit = 16 + 4;
+    int max_sub_layers_minus1 = 0;
+    for (int i = 0; i < 3; ++i) {
+      max_sub_layers_minus1 = (max_sub_layers_minus1 << 1) | read_bit();
     }
-    // NAL header, sps_video_parameter_set_id, sps_max_sub_layers_minus1, sps_temporal_id_nesting_flag,
-    // then a profile_tier_level without sub-layers.
-    bit = 16 + 4 + 3 + 1 + 96;
+    // sps_temporal_id_nesting_flag, then profile_tier_level's general profile and level.
+    bit += 1 + 96;
+
+    // Low-latency rate control adds temporal sub-layers, each of which may carry its own profile and level.
+    std::vector<std::pair<bool, bool>> sub_layers;
+    for (int i = 0; i < max_sub_layers_minus1; ++i) {
+      const bool profile_present = read_bit();
+      const bool level_present = read_bit();
+      sub_layers.emplace_back(profile_present, level_present);
+    }
+    if (max_sub_layers_minus1 > 0) {
+      bit += 2 * (8 - max_sub_layers_minus1);
+    }
+    for (const auto &[profile_present, level_present] : sub_layers) {
+      bit += (profile_present ? 88 : 0) + (level_present ? 8 : 0);
+    }
+
     read_ue();  // sps_seq_parameter_set_id
     return read_ue();
   }
