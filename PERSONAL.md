@@ -18,27 +18,33 @@ Personal forks for streaming a headless Mac Mini to Windows laptops:
 
 Each device needs two switches in Sunshine before the new features work for it (see step 4).
 
-## 1. Add the Apple signing secrets (once)
+## 1. Signing (once)
 
 Signed and notarized builds keep the Mac's Screen Recording and Accessibility permissions across updates.
+The build signs with the same App Store Connect API key and `CERT_KEY_B64` signing key as the iOS TestFlight
+builds, so nothing is needed on the Mac and there are no passwords to make.
 
-1. On the Mac (through Moonlight), get a **Developer ID Application** certificate:
-   Keychain Access > Certificate Assistant > Request a Certificate From a Certificate Authority > save to disk.
-   Then https://developer.apple.com/account/resources/certificates > + > Developer ID Application > upload the request >
-   download the certificate and double-click it.
-2. Keychain Access > My Certificates > right-click the Developer ID Application certificate > Export > `.p12`, with a password.
-3. In Terminal: `base64 -i ~/Desktop/Certificates.p12 | pbcopy` (adjust the file name).
-4. Create an app-specific password at https://account.apple.com > Sign-In and Security > App-Specific Passwords.
-5. At https://github.com/KaiC5504/Sunshine/settings/secrets/actions add:
+1. **Secrets.** The `testflight` environment already exists on this repo, limited to the `personal` branch. Add the five
+   TestFlight secrets to it, the same values as every iOS app, in your own terminal:
 
-   | Secret | Value |
-   |---|---|
-   | `APPLE_ID` | Your Apple account email |
-   | `APPLE_TEAM_ID` | The 10-character Team ID from https://developer.apple.com/account > Membership |
-   | `APPLE_NOTARYTOOL_PASSWORD` | The app-specific password |
-   | `APPLE_CODESIGN_IDENTITY` | The certificate's full name, e.g. `Developer ID Application: Your Name (TEAMID1234)` |
-   | `APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64` | The base64 text from step 3 |
-   | `APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD` | The `.p12` password |
+   ```powershell
+   pwsh C:\Users\KaiChuan\.claude\skills\ios-testflight\scripts\set-secrets.ps1 -File <keys file> -Repo KaiC5504/Sunshine
+   ```
+
+   Or add them by hand at https://github.com/KaiC5504/Sunshine/settings/environments > **testflight** >
+   **Add environment secret**: `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_KEY_IDENTIFIER`,
+   `APP_STORE_CONNECT_PRIVATE_KEY`, `CERT_KEY_B64`, `SIGNING_NAME`.
+2. **Developer ID certificate.** Apps outside the App Store need a *Developer ID Application* certificate, which only
+   the Account Holder can create on the developer portal (the API key can't). The next build after step 1 makes the
+   certificate request from `CERT_KEY_B64` for you:
+   1. Open the newest run at https://github.com/KaiC5504/Sunshine/actions/workflows/personal-macos.yml. It shows a
+      warning that no Developer ID certificate matches. Under **Artifacts**, download `developer-id-csr` and unzip it.
+   2. https://developer.apple.com/account/resources/certificates/add > **Developer ID Application** > Continue >
+      **G2 Sub-CA (Xcode 11.4.1 or later)** > Choose File: `DeveloperID.certSigningRequest` > Continue.
+      There's no need to download the certificate.
+
+   From then on every build finds the certificate through the API key and signs with it. Releases are also notarized
+   with the same key.
 
 ## 2. Publish releases
 

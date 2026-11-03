@@ -14,28 +14,13 @@ on:
       release_version:
         required: true
         type: string
-    secrets:
-      # email address
-      APPLE_ID:
-        required: false
-      # 10-character Team ID
-      APPLE_TEAM_ID:
-        required: false
-      # app-specific password in APPLE_ID's account that must be named "notarytool"
-      # https://support.apple.com/en-us/102654
-      APPLE_NOTARYTOOL_PASSWORD:
-        required: false
-      # Developer ID Application: Full Name (TEAMIDHERE)
-      APPLE_CODESIGN_IDENTITY:
-        required: false
-      # pkcs12 export from Xcode in base64
-      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64:
-        required: false
-      # pkcs12 password added by Xcode export
-      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD:
-        required: false
-
+# Signing uses the owner's TestFlight secrets from the `testflight` environment
+# (APP_STORE_CONNECT_ISSUER_ID, APP_STORE_CONNECT_KEY_IDENTIFIER, APP_STORE_CONNECT_PRIVATE_KEY,
+# CERT_KEY_B64, SIGNING_NAME). Environment secrets can't be passed in by a caller, so the jobs
+# below name the environment themselves. This repo is public: so is the log.
 env:
+  # cli-tools otherwise caches an App Store Connect token in $TMPDIR, where build code could read it.
+  APP_STORE_CONNECT_DISABLE_JWT_CACHE: "1"
   BRANCH: ${{ github.head_ref || github.ref_name }}
   BUILD_VERSION: ${{ inputs.release_version }}
   COMMIT: ${{ inputs.release_commit }}
@@ -48,6 +33,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ matrix.os }}
+    environment: testflight
     outputs:
       notarytool_submission_id_arm64: ${{ steps.notarize_submit.outputs.submission_id_arm64 }}
       notarytool_submission_id_x86_64: ${{ steps.notarize_submit.outputs.submission_id_x86_64 }}
@@ -64,13 +50,6 @@ jobs:
             arch: "x86_64"
             build_docs: "OFF"
     steps:
-      - name: Install Apple certificate
-        uses: apple-actions/import-codesign-certs@288b8ec97b82c66b6f2a6baaf7acc8dfbcbe331c  # v7.2.0
-        if: inputs.publish_release == 'true'
-        with:
-          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD }}
-
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -118,8 +97,6 @@ jobs:
           uv sync "${uv_sync_args[@]}"  # NOSONAR(githubactions:S8541, githubactions:S8544)
 
       - name: Configure
-        env:
-          APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
         run: |
           icu4c_root="$(brew --prefix icu4c@78 2>/dev/null)"
           export CPPFLAGS="${CPPFLAGS:+${CPPFLAGS} }-I${icu4c_root}/include"
@@ -140,8 +117,7 @@ jobs:
             -DQt6Svg_DIR="$(brew --prefix qtsvg 2>/dev/null)/lib/cmake/Qt6Svg" \
             -DSUNSHINE_PUBLISHER_NAME="${GITHUB_REPOSITORY_OWNER}" \
             -DSUNSHINE_PUBLISHER_WEBSITE="https://app.lizardbyte.dev" \
-            -DSUNSHINE_PUBLISHER_ISSUE_URL="https://app.lizardbyte.dev/support" \
-            -DAPPLE_CODESIGN_IDENTITY="${APPLE_CODESIGN_IDENTITY}"
+            -DSUNSHINE_PUBLISHER_ISSUE_URL="https://app.lizardbyte.dev/support"
 
       - name: Build
         run: |
@@ -149,12 +125,103 @@ jobs:
           cmake --build build -j "$(sysctl -n hw.ncpu)"
           echo "::remove-matcher owner=gcc::"
 
+      # After the build, so npm and the other build-time code never run next to the signing key.
+      - name: Install Developer ID certificate
+        id: signing
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          CERT_KEY_B64: ${{ secrets.CERT_KEY_B64 }}
+          # The certificate holder's legal name, which cli-tools and `security` print. As a secret it is masked.
+          SIGNING_NAME: ${{ secrets.SIGNING_NAME }}
+          RELEASE: ${{ inputs.publish_release }}
+        run: |
+          set -e
+          umask 077
+          if [[ -z "${CERT_KEY_B64}" ]]; then
+            if [[ "${RELEASE}" == "true" ]]; then
+              echo "::error::The testflight environment has no signing secrets; see PERSONAL.md step 1."
+              exit 1
+            fi
+            echo "No signing secrets; building unsigned."
+            exit 0
+          fi
+
+          key="${RUNNER_TEMP}/cert_key.pem"
+          certs="${RUNNER_TEMP}/certificates"
+          trap 'rm -rf "${key}" "${certs}"' EXIT
+          python -m pip install --quiet --require-hashes -r .github/signing-requirements.txt
+
+          # Not cli-tools' empty default: with it, anything that copies the keychain file can
+          # decrypt the signing key offline.
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          echo "::add-mask::${KEYCHAIN_PASSWORD}"
+          export KEYCHAIN_PASSWORD
+          keychain initialize --password @env:KEYCHAIN_PASSWORD
+          keychain_path=$(security default-keychain | sed -e 's/^ *"//' -e 's/"$//')
+          echo "SIGNING_KEYCHAIN=${keychain_path}" >> "${GITHUB_ENV}"
+
+          # Carried base64 because a PEM pasted into a web form loses its line breaks.
+          printf '%s' "${CERT_KEY_B64}" | openssl base64 -d -A > "${key}"
+          grep -v -e '-----' "${key}" | while IFS= read -r line; do echo "::add-mask::${line}"; done
+          p12_password=$(openssl rand -hex 16)
+          echo "::add-mask::${p12_password}"
+
+          # Every certificate made from this key: the iOS distribution one and, once created,
+          # Developer ID Application. The API can't create Developer ID certificates; only the
+          # Account Holder can, on the developer portal.
+          app-store-connect certificates list \
+            --certificate-key "@file:${key}" \
+            --certificates-dir "${certs}" \
+            --p12-password "${p12_password}" \
+            --save
+          if compgen -G "${certs}/*.p12" > /dev/null; then
+            keychain add-certificates --certificate "${certs}/*.p12" --certificate-password "${p12_password}"
+          fi
+          # Lets codesign use the key without a GUI prompt on a headless runner.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASSWORD}" \
+            "${keychain_path}" > /dev/null
+
+          # The SHA-1 hash, so the legal name never reaches CMake's cache or codesign's output.
+          identity=$(security find-identity -v -p codesigning "${keychain_path}" \
+            | awk '/"Developer ID Application: / { print $2; exit }')
+          if [[ -z "${identity}" ]]; then
+            mkdir -p csr
+            # A CSR holds only the public key, so it is safe in a public artifact.
+            openssl req -new -key "${key}" -subj "/CN=Sunshine Developer ID" \
+              -out csr/DeveloperID.certSigningRequest
+            echo "csr=true" >> "${GITHUB_OUTPUT}"
+            message="No Developer ID Application certificate matches CERT_KEY_B64. Create one from the developer-id-csr artifact (PERSONAL.md step 1)."
+            echo "${message}" >> "${GITHUB_STEP_SUMMARY}"
+            if [[ "${RELEASE}" == "true" ]]; then
+              echo "::error::${message}"
+              exit 1
+            fi
+            echo "::warning::${message} Building unsigned."
+            exit 0
+          fi
+          echo "sign=true" >> "${GITHUB_OUTPUT}"
+          echo "APPLE_CODESIGN_IDENTITY=${identity}" >> "${GITHUB_ENV}"
+
+      - name: Upload certificate request
+        if: steps.signing.outputs.csr == 'true' && matrix.arch == 'arm64'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: developer-id-csr
+          path: csr/DeveloperID.certSigningRequest
+          if-no-files-found: error
+
       - name: Package DMG
         env:
-          APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
           MATRIX_NAME: ${{ matrix.name }}
-          SHOULD_SIGN: ${{ inputs.publish_release }}
+          SHOULD_SIGN: ${{ steps.signing.outputs.sign == 'true' }}
         run: |
+          if [[ "${SHOULD_SIGN}" == "true" ]]; then
+            # The identity is baked into the install script at configure time.
+            cmake -B build -DAPPLE_CODESIGN_IDENTITY="${APPLE_CODESIGN_IDENTITY}"
+          fi
+
           # build DMG and sign everything (see cmake/packaging/macos.cmake)
           # cpack can rarely fail with "hdiutil: create failed - Resource busy"
           # so let's allow 1 retry
@@ -169,28 +236,37 @@ jobs:
           mkdir -p artifacts
           cp "build/cpack_artifacts/Sunshine.dmg" "artifacts/Sunshine-${MATRIX_NAME}.dmg"
 
+      - name: Remove signing keychain
+        if: always() && env.SIGNING_KEYCHAIN != ''
+        run: |
+          keychain use-login
+          security delete-keychain "${SIGNING_KEYCHAIN}"
+
       - name: Submit for notarization
         id: notarize_submit
         if: inputs.publish_release == 'true'
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_NOTARYTOOL_PASSWORD: ${{ secrets.APPLE_NOTARYTOOL_PASSWORD }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
           MATRIX_ARCH: ${{ matrix.arch }}
         run: |
           # Notarizing allows the signed .app to run on any Mac with no prompts.
           # If you don't notarize, users must jump through the "Open Anyway" hoop as well as run
           # `xattr -cr /Applications/Sunshine.app` to remove quarantine.
-          if [[ -n "${APPLE_NOTARYTOOL_PASSWORD}" ]]; then
-            submission_id=$(xcrun notarytool submit build/cpack_artifacts/Sunshine.dmg \
-              --apple-id "${APPLE_ID}" \
-              --team-id "${APPLE_TEAM_ID}" \
-              --password "${APPLE_NOTARYTOOL_PASSWORD}" \
-              --output-format json \
-              | jq -r '.id')
-            echo "Submission ID: ${submission_id}"
-            echo "submission_id_${MATRIX_ARCH}=${submission_id}" >> "${GITHUB_OUTPUT}"
-          fi
+          set -e
+          umask 077
+          api_key="${RUNNER_TEMP}/AuthKey.p8"
+          trap 'rm -f "${api_key}"' EXIT
+          printf '%s\n' "${APP_STORE_CONNECT_PRIVATE_KEY}" > "${api_key}"
+          submission_id=$(xcrun notarytool submit build/cpack_artifacts/Sunshine.dmg \
+            --key "${api_key}" \
+            --key-id "${APP_STORE_CONNECT_KEY_IDENTIFIER}" \
+            --issuer "${APP_STORE_CONNECT_ISSUER_ID}" \
+            --output-format json \
+            | jq -r '.id')
+          echo "Submission ID: ${submission_id}"
+          echo "submission_id_${MATRIX_ARCH}=${submission_id}" >> "${GITHUB_OUTPUT}"
 
       - name: Test
         id: test
@@ -260,6 +336,7 @@ jobs:
     permissions:
       contents: read
     runs-on: ${{ matrix.os }}
+    environment: testflight
     strategy:
       fail-fast: false
       matrix:
@@ -271,12 +348,6 @@ jobs:
             name: "macOS-x86_64"
             arch: "x86_64"
     steps:
-      - name: Install Apple certificate
-        uses: apple-actions/import-codesign-certs@288b8ec97b82c66b6f2a6baaf7acc8dfbcbe331c  # v7.2.0
-        with:
-          p12-file-base64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
-          p12-password: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD }}
-
       - name: Download DMG artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
@@ -285,25 +356,33 @@ jobs:
 
       - name: Wait for notarization and staple
         env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_NOTARYTOOL_PASSWORD: ${{ secrets.APPLE_NOTARYTOOL_PASSWORD }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_IDENTIFIER }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
           MATRIX_NAME: ${{ matrix.name }}
           SUBMISSION_ID: ${{ matrix.arch == 'arm64'
             && needs.build_dmg.outputs.notarytool_submission_id_arm64
             || needs.build_dmg.outputs.notarytool_submission_id_x86_64 }}
         run: |
           if [[ -z "${SUBMISSION_ID}" ]]; then
-            echo "No submission ID found; skipping notarization wait."
-            exit 0
+            echo "No submission ID found; notarization was never submitted."
+            exit 1
           fi
+
+          umask 077
+          api_key="${RUNNER_TEMP}/AuthKey.p8"
+          trap 'rm -f "${api_key}"' EXIT
+          printf '%s\n' "${APP_STORE_CONNECT_PRIVATE_KEY}" > "${api_key}"
+          notary_auth=(
+            --key "${api_key}"
+            --key-id "${APP_STORE_CONNECT_KEY_IDENTIFIER}"
+            --issuer "${APP_STORE_CONNECT_ISSUER_ID}"
+          )
 
           echo "Polling notarization status for submission: ${SUBMISSION_ID}"
           while true; do
             status=$(xcrun notarytool info "${SUBMISSION_ID}" \
-              --apple-id "${APPLE_ID}" \
-              --team-id "${APPLE_TEAM_ID}" \
-              --password "${APPLE_NOTARYTOOL_PASSWORD}" \
+              "${notary_auth[@]}" \
               --output-format json \
               | jq -r '.status')
             echo "Current status: ${status}"
@@ -313,10 +392,7 @@ jobs:
             elif [[ "${status}" == "Invalid" || "${status}" == "Rejected" ]]; then
               echo "Notarization failed with status: ${status}"
               # Print the full log for debugging
-              xcrun notarytool log "${SUBMISSION_ID}" \
-                --apple-id "${APPLE_ID}" \
-                --team-id "${APPLE_TEAM_ID}" \
-                --password "${APPLE_NOTARYTOOL_PASSWORD}"
+              xcrun notarytool log "${SUBMISSION_ID}" "${notary_auth[@]}"
               exit 1
             fi
             echo "Status is '${status}', waiting 30 seconds before retrying..."

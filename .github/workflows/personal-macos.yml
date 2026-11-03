@@ -1,6 +1,7 @@
 ---
-# Builds the personal macOS fork on every push to `personal` and publishes a signed,
-# notarized GitHub release when run manually with `release` checked.
+# Builds the personal macOS fork on every push to `personal` (signed once the Developer ID
+# certificate exists) and publishes a signed, notarized GitHub release when run manually with
+# `release` checked. Signing secrets live in the `testflight` environment; see ci-macos.yml.
 name: Personal macOS
 permissions: {}
 
@@ -47,13 +48,6 @@ jobs:
       publish_release: ${{ needs.version.outputs.publish }}
       release_commit: ${{ github.sha }}
       release_version: ${{ needs.version.outputs.version }}
-    secrets:
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      APPLE_NOTARYTOOL_PASSWORD: ${{ secrets.APPLE_NOTARYTOOL_PASSWORD }}
-      APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
-      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
-      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD }}
 
   release:
     name: Release
