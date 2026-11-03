@@ -1007,9 +1007,10 @@ namespace stream {
   }
 
   double sustained_send_rate(int bitrate_kbps, std::size_t blocksize) {
-    // Over Wi-Fi through an access point, 1700-packet keyframes sent at the old fixed 800 Mbps lost
-    // 18% of keyframes and the P-frames right after them; at 300-400 Mbps nearly none were lost.
-    constexpr double bitrate_multiple = 2.5;
+    // Over two Wi-Fi hops through an access point that carried 400 Mbps, 1700-packet keyframes sent
+    // at the old fixed 800 Mbps lost 18% of keyframes and the P-frames right after them, and
+    // keyframes paced at 375 Mbps still lost their last packets.
+    constexpr double bitrate_multiple = 2.0;
     constexpr double min_bps = 100e6;
     constexpr double max_bps = 800e6;
     const auto bps = std::clamp(bitrate_kbps * 1000.0 * bitrate_multiple, min_bps, max_bps);

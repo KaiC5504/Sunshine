@@ -168,9 +168,9 @@ TEST(SendPacerTests, ZeroRateTurnsPacingOff) {
   EXPECT_EQ(pacer.reserve(100000, start), 0ns);
 }
 
-TEST(SustainedSendRateTests, AllowsTwoAndAHalfTimesTheBitrate) {
-  // 375 Mbps in 1408-byte packets
-  EXPECT_NEAR(stream::sustained_send_rate(150000, 1408), 33.29, 0.01);
+TEST(SustainedSendRateTests, AllowsTwiceTheBitrate) {
+  // 300 Mbps in 1408-byte packets
+  EXPECT_NEAR(stream::sustained_send_rate(150000, 1408), 26.63, 0.01);
 }
 
 TEST(SustainedSendRateTests, NeverGoesBelow100Mbps) {
