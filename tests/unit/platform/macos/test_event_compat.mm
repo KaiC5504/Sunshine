@@ -4,11 +4,11 @@
  */
 
 #ifdef __APPLE__
-  // platform includes
-  #import <AppKit/AppKit.h>
-
   // test includes
   #include "../../../tests_common.h"
+
+  // platform includes
+  #import <AppKit/AppKit.h>
 
   // local includes
   #include "src/platform/macos/misc.h"

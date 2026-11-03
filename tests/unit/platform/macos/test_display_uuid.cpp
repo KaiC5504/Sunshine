@@ -4,15 +4,15 @@
  */
 
 #ifdef __APPLE__
+  // test includes
+  #include "../../../tests_common.h"
+
   // standard includes
   #include <algorithm>
   #include <cctype>
 
   // platform includes
   #include <CoreGraphics/CoreGraphics.h>
-
-  // test includes
-  #include "../../../tests_common.h"
 
   // local includes
   #include "src/platform/macos/misc.h"
