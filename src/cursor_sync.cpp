@@ -26,7 +26,7 @@ namespace cursor_sync {
     }
 
     for (auto &waiter : pending) {
-      waiter.respond(reply_t {204, sequence, visible});
+      waiter.respond(reply_t {.status = 204, .sequence = sequence, .visible = visible});
     }
   }
 
@@ -86,7 +86,7 @@ namespace cursor_sync {
       if (changed) {
         due.emplace_back(std::move(it->respond), current(it->stream_width));
       } else if (now >= it->deadline) {
-        due.emplace_back(std::move(it->respond), reply_t {204, sequence, visible});
+        due.emplace_back(std::move(it->respond), reply_t {.status = 204, .sequence = sequence, .visible = visible});
       } else {
         ++it;
         continue;
@@ -101,7 +101,7 @@ namespace cursor_sync {
       return it->second;
     }
 
-    reply_t reply {200, sequence, visible};
+    reply_t reply {.sequence = sequence, .visible = visible};
     if (visible) {
       if (auto image = backend->image(stream_width)) {
         reply.png = std::move(image->png);
