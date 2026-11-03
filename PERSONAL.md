@@ -138,7 +138,31 @@ after 5 minutes).
 - Files from Windows go to `~/Downloads/Moonlight` on the Mac and are put on the Mac clipboard, so Cmd+V in Finder pastes them.
 - The badge updates every few seconds while Moonlight shows the computer list.
 
-## Building on the Mac without a release
+## Building on the Mac
 
-`personal-mac/build-sunshine-mac.sh` in this repo builds the `personal` branch on the Mac and installs it ad hoc
-signed. macOS then asks for the permissions again after every rebuild, so prefer signed releases.
+Day-to-day changes build on the Mac itself: only changed files recompile, and the result is signed with the same
+Developer ID as the releases, so macOS keeps Sunshine's permissions. A change is running a few minutes after it is
+pushed, instead of the half hour a GitHub Actions build takes. Releases still come from GitHub Actions.
+
+Once:
+
+1. Install Homebrew (asks for the Mac password):
+   `ssh -t mac '/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'`
+2. Clone the fork to `~/src/sunshine-personal` on the Mac with submodules, then let it accept pushes:
+   `git config receive.denyCurrentBranch updateInstead`. On the PC: `git remote add mac mac:src/sunshine-personal`.
+3. Import the signing key, pasting `CERT_KEY_B64` from the password manager when asked:
+   `ssh -t mac 'bash ~/src/sunshine-personal/personal-mac/setup-signing.sh'`.
+   It goes into its own keychain, `sunshine-signing`, whose password is in `~/.config/sunshine-build/`.
+
+Each change:
+
+```bash
+git push mac personal
+ssh mac 'bash ~/src/sunshine-personal/personal-mac/dev-build.sh --test "WebUICert*"'
+```
+
+`--test` takes a GoogleTest filter and runs only those tests; `--no-install` only builds. The first build installs
+the Homebrew dependencies and compiles everything; later ones rebuild what changed.
+
+`personal-mac/build-sunshine-mac.sh` is the older one-shot build. It signs ad hoc, so macOS asks for the
+permissions again after every rebuild.
