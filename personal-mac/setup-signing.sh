@@ -2,8 +2,9 @@
 # One-time: put the Developer ID signing key in a keychain of its own, so dev-build.sh can sign
 # builds over SSH. Builds signed with the same identity as the releases keep their macOS permissions.
 #
-# Usage (from Windows):  ssh -t mac 'bash ~/src/sunshine-personal/personal-mac/setup-signing.sh'
-# Paste CERT_KEY_B64 from your password manager when asked; it is not shown or saved.
+# Usage (from Windows, with CERT_KEY_B64 copied from the password manager):
+#   Get-Clipboard | ssh mac 'bash ~/src/sunshine-personal/personal-mac/setup-signing.sh'
+# Or run it with ssh -t and paste when asked. The key is not shown or saved anywhere but the keychain.
 set -euo pipefail
 umask 077
 
@@ -23,8 +24,18 @@ trap 'rm -rf "$tmp"' EXIT
 [[ -f "$tmp/codesign0" ]] || die "$APP is not signed with a certificate"
 openssl x509 -inform DER -in "$tmp/codesign0" -out "$tmp/cert.pem"
 
-read -rsp "Paste CERT_KEY_B64, then press Enter: " key_b64
-echo
+if [[ -t 0 ]]; then
+  # macOS caps a typed line at 1024 bytes in canonical mode and rings the bell instead; the key is longer.
+  saved_tty="$(stty -g)"
+  stty -icanon -echo
+  read -rp "Paste CERT_KEY_B64, then press Enter: " key_b64 || true
+  stty "$saved_tty"
+  echo
+else
+  read -r key_b64 || true
+fi
+key_b64="${key_b64//[[:space:]]/}"
+[[ -n "$key_b64" ]] || die "no key was pasted"
 printf '%s' "$key_b64" | openssl base64 -d -A > "$tmp/key.pem"
 unset key_b64
 

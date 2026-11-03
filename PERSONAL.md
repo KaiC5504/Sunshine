@@ -151,7 +151,7 @@ Once:
 2. Clone the fork to `~/src/sunshine-personal` on the Mac with submodules, then let it accept pushes:
    `git config receive.denyCurrentBranch updateInstead`. On the PC: `git remote add mac mac:src/sunshine-personal`.
 3. Import the signing key, pasting `CERT_KEY_B64` from the password manager when asked:
-   `ssh -t mac 'bash ~/src/sunshine-personal/personal-mac/setup-signing.sh'`.
+   `Get-Clipboard | ssh mac 'bash ~/src/sunshine-personal/personal-mac/setup-signing.sh'` in PowerShell.
    It goes into its own keychain, `sunshine-signing`, whose password is in `~/.config/sunshine-build/`.
 
 Each change:
