@@ -48,7 +48,8 @@ builds, so nothing is needed on the Mac and there are no passwords to make.
 
 ## 2. Publish releases
 
-Every push to `personal` builds and tests both apps. To publish a release:
+Sunshine's workflow runs only when started by hand; day-to-day builds happen on the Mac (see "Building on the Mac").
+To publish a release:
 
 - Sunshine: https://github.com/KaiC5504/Sunshine/actions/workflows/personal-macos.yml > Run workflow > tick
   **Publish a signed GitHub release**. Notarization makes this take a while.
@@ -142,7 +143,8 @@ after 5 minutes).
 
 Day-to-day changes build on the Mac itself: only changed files recompile, and the result is signed with the same
 Developer ID as the releases, so macOS keeps Sunshine's permissions. A change is running a few minutes after it is
-pushed, instead of the half hour a GitHub Actions build takes. Releases still come from GitHub Actions.
+pushed, instead of the half hour a GitHub Actions build takes. Releases still come from GitHub Actions. Nothing
+builds by itself: a push only updates the Mac's checkout, and `dev-build.sh` runs when started.
 
 Once:
 
