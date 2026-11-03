@@ -981,6 +981,73 @@ namespace stream {
     return result;
   }
 
+  void send_pacer_t::configure(double packets_per_ms, double burst_packets) {
+    rate = packets_per_ms;
+    burst = burst_packets;
+  }
+
+  std::chrono::nanoseconds send_pacer_t::reserve(std::size_t packets, std::chrono::steady_clock::time_point now) {
+    if (rate <= 0) {
+      return {};
+    }
+
+    if (!last_refill) {
+      tokens = burst;
+      last_refill = now;
+    } else if (now > *last_refill) {
+      tokens = std::min(burst, tokens + std::chrono::duration<double, std::milli>(now - *last_refill).count() * rate);
+      last_refill = now;
+    }
+
+    tokens -= static_cast<double>(packets);
+    if (tokens >= 0) {
+      return {};
+    }
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double, std::milli>(-tokens / rate));
+  }
+
+  double sustained_send_rate(int bitrate_kbps, std::size_t blocksize) {
+    // Over Wi-Fi through an access point, 1700-packet keyframes sent at the old fixed 800 Mbps lost
+    // 18% of keyframes and the P-frames right after them; at 300-400 Mbps nearly none were lost.
+    constexpr double bitrate_multiple = 2.5;
+    constexpr double min_bps = 100e6;
+    constexpr double max_bps = 800e6;
+    const auto bps = std::clamp(bitrate_kbps * 1000.0 * bitrate_multiple, min_bps, max_bps);
+    return bps / 8 / static_cast<double>(blocksize) / 1000;
+  }
+
+  fec_plan_t plan_fec(std::size_t payload_size, std::size_t blocksize, int fec_percentage, int min_parity_shards) {
+    // There are 2 bits for FEC block count for a maximum of 4 FEC blocks
+    constexpr std::size_t max_blocks = 4;
+    constexpr std::size_t max_shards = DATA_SHARDS_MAX;
+
+    // The max number of data shards per block is found by solving this system of equations for D:
+    // D = 255 - P
+    // P = D * F
+    // which results in the solution:
+    // D = 255 / (1 + F)
+    // multiplied by 100 since F is the percentage as an integer:
+    // D = (255 * 100) / (100 + F)
+    const std::size_t max_data_shards_per_block = (max_shards * 100) / (100 + fec_percentage);
+    const auto max_data_per_block = max_data_shards_per_block * blocksize;
+    const auto blocks = std::max<std::size_t>(1, (payload_size + max_data_per_block - 1) / max_data_per_block);
+    if (blocks <= max_blocks) {
+      return {blocks, fec_percentage};
+    }
+
+    // The largest block, with the same alignment the sender uses to split the frame
+    const auto aligned_size = ((payload_size / max_blocks + blocksize - 1) / blocksize) * blocksize;
+    const auto first_blocks = aligned_size / blocksize;
+    const auto last_block = (payload_size - (max_blocks - 1) * aligned_size + blocksize - 1) / blocksize;
+    const auto data_shards = std::max(first_blocks, last_block);
+
+    const std::size_t spare_shards = data_shards < max_shards ? max_shards - data_shards : 0;
+    if (spare_shards < static_cast<std::size_t>(std::max(min_parity_shards, 1))) {
+      return {max_blocks, 0};
+    }
+    return {max_blocks, static_cast<int>(std::min<std::size_t>(fec_percentage, spare_shards * 100 / data_shards))};
+  }
+
   /**
    * @brief Replace a byte sequence in an encoded packet.
    *
@@ -1616,6 +1683,7 @@ namespace stream {
     }
 
     auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
+    send_pacer_t pacer;
 
     while (auto packet = packets->pop()) {
       if (shutdown_event->peek()) {
@@ -1667,8 +1735,6 @@ namespace stream {
         frame_header.frame_processing_latency = 0;
       }
 
-      auto fecPercentage = config::stream.fec_percentage;
-
       // Insert space for packet headers
       auto blocksize = session->config.packetsize + MAX_RTP_HEADER_SIZE;
       auto payload_blocksize = blocksize - sizeof(video_packet_raw_t);
@@ -1679,26 +1745,18 @@ namespace stream {
       // There are 2 bits for FEC block count for a maximum of 4 FEC blocks
       constexpr auto MAX_FEC_BLOCKS = 4;
 
-      // The max number of data shards per block is found by solving this system of equations for D:
-      // D = 255 - P
-      // P = D * F
-      // which results in the solution:
-      // D = 255 / (1 + F)
-      // multiplied by 100 since F is the percentage as an integer:
-      // D = (255 * 100) / (100 + F)
-      auto max_data_shards_per_fec_block = (DATA_SHARDS_MAX * 100) / (100 + fecPercentage);
+      const auto fec_plan = plan_fec(payload.size(), blocksize, config::stream.fec_percentage, session->config.minRequiredFecPackets);
+      auto fecPercentage = fec_plan.percentage;
+      auto fec_blocks_needed = fec_plan.blocks;
 
-      // Compute the number of FEC blocks needed for this frame using the block size and max shards
-      auto max_data_per_fec_block = max_data_shards_per_fec_block * blocksize;
-      auto fec_blocks_needed = (payload.size() + (max_data_per_fec_block - 1)) / max_data_per_fec_block;
-
-      // If the number of FEC blocks needed exceeds the protocol limit, turn off FEC for this frame.
-      // For normal FEC percentages, this should only happen for enormous frames (over 800 packets at 20%).
-      if (fec_blocks_needed > MAX_FEC_BLOCKS) {
-        BOOST_LOG(warning) << "Skipping FEC for abnormally large encoded frame (needed "sv << fec_blocks_needed << " FEC blocks)"sv;
-        fecPercentage = 0;
-        fec_blocks_needed = MAX_FEC_BLOCKS;
+      // Expected for keyframes over about 850 packets at 20%, such as 1440p 4:4:4 ones.
+      if (fecPercentage < config::stream.fec_percentage) {
+        BOOST_LOG(debug) << "Large encoded frame ("sv << payload.size() / blocksize << " packets) sent with "sv << fecPercentage << "% FEC"sv;
       }
+
+      // Let about 10 ms of packets out at once, which covers normal frames.
+      const auto send_rate = sustained_send_rate(session->config.monitor.bitrate, blocksize);
+      pacer.configure(send_rate, send_rate * 10);
 
       std::array<std::string_view, MAX_FEC_BLOCKS> fec_blocks;
       auto fec_blocks_begin = std::begin(fec_blocks);
@@ -1856,6 +1914,9 @@ namespace stream {
               }
 
               size_t current_batch_size = x - next_shard_to_send + 1;
+              if (const auto wait = pacer.reserve(current_batch_size, std::chrono::steady_clock::now()); wait > 0ns) {
+                timer->sleep_for(wait);
+              }
               batch_info.block_offset = next_shard_to_send;
               batch_info.block_count = current_batch_size;
 
