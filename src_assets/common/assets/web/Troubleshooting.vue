@@ -383,6 +383,23 @@
         </div>
       </div>
     </div>
+    <!-- Trust the web UI certificate -->
+    <div class="card my-4">
+      <div class="card-body">
+        <h2 id="webui_certificate">{{ $t('troubleshooting.webui_certificate') }}</h2>
+        <p>{{ $t('troubleshooting.webui_certificate_desc') }}</p>
+        <ul>
+          <li>{{ $t('troubleshooting.webui_certificate_windows') }}</li>
+          <li>{{ $t('troubleshooting.webui_certificate_macos') }}</li>
+        </ul>
+        <div>
+          <a class="btn btn-primary" href="/api/webui-authority" download>
+            <download :size="18" class="icon"></download>
+            {{ $t('troubleshooting.webui_certificate_download') }}
+          </a>
+        </div>
+      </div>
+    </div>
     <!-- Reset XDG Portal restore token -->
     <div class="card my-4" v-if="platform === 'linux' || platform === 'freebsd'">
       <div class="card-body">

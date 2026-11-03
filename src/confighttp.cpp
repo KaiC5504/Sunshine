@@ -62,6 +62,7 @@
 #include "system_tray.h"
 #include "utility.h"
 #include "uuid.h"
+#include "webui_cert.h"
 
 using namespace std::literals;
 
@@ -1716,6 +1717,43 @@ namespace confighttp {
     }
   }
 
+  namespace {
+    fs::path webui_authority_file;  ///< Authority the web UI certificate was issued by; empty while the pairing certificate is in use.
+  }  // namespace
+
+  void set_webui_authority_file(const std::filesystem::path &path) {
+    webui_authority_file = path;
+  }
+
+  /**
+   * @brief Download the certificate authority that clients trust to open the web UI without a warning.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/webui-authority|:| GET|:| null}
+   */
+  void getWebUIAuthority(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    const auto authority = webui_authority_file.empty() ? std::string {} : file_handler::read_file(webui_authority_file.string().c_str());
+    if (authority.empty()) {
+      not_found(response, "The web UI is using the pairing certificate");
+      return;
+    }
+
+    const auto label = webui_cert::host_label(platf::get_host_name());
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/x-x509-ca-cert");
+    headers.emplace("Content-Disposition", std::format(R"(attachment; filename="sunshine-{}-ca.crt")", label.empty() ? "local"s : label));
+    headers.emplace("X-Frame-Options", "DENY");
+    headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
+    response->write(SimpleWeb::StatusCode::success_ok, authority, headers);
+  }
+
   /**
    * @brief Get the logs from the log file.
    * @param response The HTTP response object.
@@ -2480,7 +2518,25 @@ namespace confighttp {
     const auto port_https = net::map_port(PORT_HTTPS);
     const auto address_family = net::af_from_enum_string(config::sunshine.address_family);
 
-    https_server_t server {config::nvhttp.cert, config::nvhttp.pkey};
+    // Moonlight pins the pairing certificate, so the web UI gets its own that browsers can be told to trust.
+    auto cert_file = config::nvhttp.cert;
+    auto pkey_file = config::nvhttp.pkey;
+    const auto webui_files = webui_cert::ensure(
+      fs::path {config::nvhttp.cert}.parent_path(),
+      platf::get_host_name(),
+      webui_cert::local_addresses(),
+      std::chrono::system_clock::now()
+    );
+    if (webui_files) {
+      cert_file = webui_files->cert.string();
+      pkey_file = webui_files->pkey.string();
+      set_webui_authority_file(webui_files->authority);
+    } else {
+      set_webui_authority_file({});
+      BOOST_LOG(warning) << "Serving the web UI with the pairing certificate"sv;
+    }
+
+    https_server_t server {cert_file, pkey_file};
 
     // Helper to create SPA entry handlers without repeating the signature
     auto page_handler = [](bool require_auth = true, bool redirect_if_username = false) {
@@ -2528,6 +2584,7 @@ namespace confighttp {
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/reset-portal-token$"]["POST"] = resetPortalToken;
     server.resource["^/api/restart$"]["POST"] = restart;
+    server.resource["^/api/webui-authority$"]["GET"] = getWebUIAuthority;
     server.resource["^/api/permissions$"]["GET"] = getPermissions;
     server.resource["^/api/permissions/request$"]["POST"] = requestPermission;
     server.resource["^/api/virtual-input/license$"]["GET"] = getVirtualInputLicense;

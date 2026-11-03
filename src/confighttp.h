@@ -93,6 +93,21 @@ namespace confighttp {
   void getCSRFToken(const resp_https_t &response, const req_https_t &request);
 
   /**
+   * @brief Download the certificate authority that clients trust to open the web UI without a warning.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void getWebUIAuthority(const resp_https_t &response, const req_https_t &request);
+
+  /**
+   * @brief Set the authority certificate that getWebUIAuthority() serves.
+   *
+   * @param path Authority certificate, or empty while the web UI uses the pairing certificate.
+   */
+  void set_webui_authority_file(const std::filesystem::path &path);
+
+  /**
    * @brief List authenticated pairing requests awaiting operator approval.
    *
    * @param response HTTP response object to populate.

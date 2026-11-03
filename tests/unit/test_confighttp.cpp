@@ -337,6 +337,7 @@ protected:
     server->resource["^/virtual-input-license-test$"]["GET"] = confighttp::getVirtualInputLicense;
     server->resource["^/virtual-input-license-test$"]["POST"] = confighttp::updateVirtualInputLicense;
     server->resource["^/permissions-test$"]["GET"] = confighttp::getPermissions;
+    server->resource["^/webui-authority-test$"]["GET"] = confighttp::getWebUIAuthority;
     server->resource["^/permissions-test$"]["POST"] = confighttp::requestPermission;
     server->resource["^/pairing-test$"]["DELETE"] = confighttp::cancelPairing;
     server->resource["^/pairing-test$"]["GET"] = confighttp::getPendingPairings;
@@ -1730,6 +1731,44 @@ TEST_F(ConfigHttpTest, VirtualInputStatusReturnsBothBackends) {
   ASSERT_TRUE(body.contains("vigembus"));
   EXPECT_TRUE(body.at("virtualhid").contains("installed"));
   EXPECT_TRUE(body.at("vigembus").contains("installed"));
+}
+
+TEST_F(ConfigHttpTest, WebUIAuthorityRequiresAuthentication) {
+  EXPECT_EQ(client->request("GET", "/webui-authority-test")->status_code, "401 Unauthorized");
+}
+
+TEST_F(ConfigHttpTest, WebUIAuthorityIsMissingWhileThePairingCertificateIsInUse) {
+  confighttp::set_webui_authority_file({});
+  SimpleWeb::CaseInsensitiveMultimap headers;
+  headers.emplace("Authorization", create_auth_header("testuser", "testpass"));
+
+  const auto response = client->request("GET", "/webui-authority-test", "", headers);
+  EXPECT_EQ(response->status_code, "404 Not Found");
+}
+
+TEST_F(ConfigHttpTest, WebUIAuthorityDownloadsTheAuthorityCertificate) {
+  const auto authority_file = test_web_dir / "webui_ca.pem";
+  {
+    std::ofstream out {authority_file};
+    out << TEST_PUBLIC_CERT;
+  }
+  confighttp::set_webui_authority_file(authority_file);
+  SimpleWeb::CaseInsensitiveMultimap headers;
+  headers.emplace("Authorization", create_auth_header("testuser", "testpass"));
+
+  const auto response = client->request("GET", "/webui-authority-test", "", headers);
+  confighttp::set_webui_authority_file({});
+
+  ASSERT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(response->content.string(), TEST_PUBLIC_CERT);
+  const auto content_type = response->header.find("Content-Type");
+  ASSERT_NE(content_type, response->header.end());
+  EXPECT_EQ(content_type->second, "application/x-x509-ca-cert");
+  const auto disposition = response->header.find("Content-Disposition");
+  ASSERT_NE(disposition, response->header.end());
+  EXPECT_TRUE(disposition->second.starts_with("attachment; filename=\"sunshine-"));
+  EXPECT_TRUE(disposition->second.ends_with("-ca.crt\""));
+  assert_security_headers(response);
 }
 
 TEST_F(ConfigHttpTest, PermissionsEndpointRequiresAuthenticationAndCsrf) {

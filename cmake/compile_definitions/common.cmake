@@ -157,6 +157,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/entry_handler.h"
         "${CMAKE_SOURCE_DIR}/src/file_handler.cpp"
         "${CMAKE_SOURCE_DIR}/src/file_handler.h"
+        "${CMAKE_SOURCE_DIR}/src/webui_cert.cpp"
+        "${CMAKE_SOURCE_DIR}/src/webui_cert.h"
         "${CMAKE_SOURCE_DIR}/src/globals.cpp"
         "${CMAKE_SOURCE_DIR}/src/globals.h"
         "${CMAKE_SOURCE_DIR}/src/logging.cpp"
