@@ -234,7 +234,7 @@ namespace webui_cert {
 
   std::optional<crypto::creds_t> issue(const crypto::creds_t &authority, const names_t &names, std::chrono::system_clock::time_point now) {
     auto authority_cert = crypto::x509(authority.x509);
-    const auto authority_key = crypto::pkey(authority.pkey);
+    auto authority_key = crypto::pkey(authority.pkey);
     if (!authority_cert || !authority_key || names.dns.empty()) {
       return std::nullopt;
     }
@@ -294,7 +294,7 @@ namespace webui_cert {
       return true;
     }
 
-    const crypto::pkey_t authority_key {X509_get_pubkey(authority.get())};
+    crypto::pkey_t authority_key {X509_get_pubkey(authority.get())};
     if (!authority_key || X509_verify(cert.get(), authority_key.get()) != 1) {
       return true;
     }
