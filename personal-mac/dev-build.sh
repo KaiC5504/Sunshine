@@ -56,7 +56,8 @@ icu4c_root="$(brew --prefix icu4c@78)"
 export CPPFLAGS="-I$icu4c_root/include"
 export LDFLAGS="-L$icu4c_root/lib"
 export LIBRARY_PATH="$icu4c_root/lib"
-export MACOSX_DEPLOYMENT_TARGET=15.0
+# Built for this Mac only, so target its own macOS like the Homebrew libraries it links.
+export MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | cut -d. -f1).0"
 
 if [[ ! -f "$BUILD_DIR/build.ninja" ]]; then
   step "Configuring"
@@ -76,7 +77,7 @@ if [[ -n "$identity" ]]; then
 fi
 
 step "Building"
-cmake --build "$BUILD_DIR" --target sunshine
+cmake --build "$BUILD_DIR" --target sunshine web-ui
 
 if [[ -n "$test_filter" ]]; then
   step "Testing $test_filter"
