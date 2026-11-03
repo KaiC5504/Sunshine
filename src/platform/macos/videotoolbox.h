@@ -167,6 +167,15 @@ namespace video {
     CFStringRef transfer_function(const sunshine_colorspace_t &colorspace);
 
     /**
+     * @brief Pick the HEVC profile for a stream's bit depth and chroma sampling.
+     *
+     * @param bit_depth 8 or 10.
+     * @param yuv444 Whether the stream uses 4:4:4 chroma sampling.
+     * @return Value for kVTCompressionPropertyKey_ProfileLevel.
+     */
+    CFStringRef hevc_profile(int bit_depth, bool yuv444);
+
+    /**
      * @brief Map a Sunshine colorspace to a CoreVideo YCbCr matrix.
      *
      * @param colorspace Colorspace negotiated for the stream.

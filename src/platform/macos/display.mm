@@ -107,6 +107,9 @@ namespace platf {
     }
 
     OSType videotoolbox_pixel_format(const video::config_t &config) {
+      if (config.chromaSamplingType == 1) {
+        return platf::videotoolbox_pixel_format(pix_fmt_e::yuv444p);
+      }
       const auto colorspace {video::colorspace_from_client_config(config, false)};
       return colorspace.bit_depth == 10 ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
     }

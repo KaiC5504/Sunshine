@@ -174,6 +174,9 @@ namespace platf {
         return kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
       case pix_fmt_e::p010:
         return kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+      case pix_fmt_e::yuv444p:
+        // VideoToolbox converts RGB to 4:4:4 itself; capture has no 4:4:4 YCbCr format.
+        return kCVPixelFormatType_32BGRA;
       default:
         return 0;
     }
@@ -360,6 +363,14 @@ namespace video {
       }
     }
 
+    CFStringRef hevc_profile(int bit_depth, bool yuv444) {
+      // The SDK has no constants for the 4:4:4 profiles, which Apple Silicon encoders accept by name.
+      if (yuv444) {
+        return bit_depth == 10 ? CFSTR("HEVC_Main44410_AutoLevel") : CFSTR("HEVC_Main444_AutoLevel");
+      }
+      return bit_depth == 10 ? kVTProfileLevel_HEVC_Main10_AutoLevel : kVTProfileLevel_HEVC_Main_AutoLevel;
+    }
+
     CFStringRef ycbcr_matrix(const sunshine_colorspace_t &colorspace) {
       switch (colorspace.colorspace) {
         case colorspace_e::rec601:
@@ -467,10 +478,18 @@ namespace video {
       return false;
     }
 
+    const bool yuv444 = config.chromaSamplingType == 1;
+    if (yuv444 && config.videoFormat != 1) {
+      BOOST_LOG(debug) << "VideoToolbox: 4:4:4 is only available with HEVC"sv;
+      return false;
+    }
+
     device->set_resolution(config.width, config.height);
 
-    // Low-latency rate control is not available for every codec and OS version.
-    if (!create_session(true) && !create_session(false)) {
+    // Low-latency rate control held the bitrate at 7.5 ms per frame for 1440p at 120 fps, against
+    // 9-15 ms and overshoot without it, but with it Apple Silicon silently encodes 4:2:0 instead
+    // of 4:4:4. It is also not available for every codec and OS version.
+    if (!(!yuv444 && create_session(true)) && !create_session(false)) {
       BOOST_LOG(error) << "VideoToolbox: couldn't create a "sv << codec.name << " session"sv;
       return false;
     }
@@ -481,8 +500,10 @@ namespace video {
     set_number_property(session, kVTCompressionPropertyKey_AverageBitRate, static_cast<int64_t>(bitrate_kbps) * 1000);
     set_number_property(session, kVTCompressionPropertyKey_ExpectedFrameRate, config.framerateX100 > 0 ? config.framerateX100 / 100.0 : static_cast<double>(config.framerate));
 
-    if (config.videoFormat == 1) {
-      set_property(session, kVTCompressionPropertyKey_ProfileLevel, device->colorspace.bit_depth == 10 ? kVTProfileLevel_HEVC_Main10_AutoLevel : kVTProfileLevel_HEVC_Main_AutoLevel);
+    // Without the 4:4:4 profile the encoder quietly produces 4:2:0, so the stream must not start.
+    if (config.videoFormat == 1 && !set_property(session, kVTCompressionPropertyKey_ProfileLevel, vt::hevc_profile(device->colorspace.bit_depth, yuv444)) && yuv444) {
+      BOOST_LOG(error) << "VideoToolbox: this Mac can't encode HEVC 4:4:4"sv;
+      return false;
     }
 
     set_property(session, kVTCompressionPropertyKey_ColorPrimaries, vt::color_primaries(device->colorspace));
@@ -496,7 +517,7 @@ namespace video {
     }
 
     BOOST_LOG(info) << "VideoToolbox: native "sv << codec.name << " session ready at "sv << config.width << 'x' << config.height
-                    << ", low-latency rate control "sv << (low_latency ? "on"sv : "off"sv);
+                    << (yuv444 ? " 4:4:4"sv : " 4:2:0"sv) << ", low-latency rate control "sv << (low_latency ? "on"sv : "off"sv);
     return true;
   }
 

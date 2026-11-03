@@ -33,24 +33,29 @@ namespace {
   using steady_time = std::chrono::steady_clock::time_point;
 
   /**
-   * @brief Wrap a blank NV12 pixel buffer in a captured image, as the capture backends do.
+   * @brief Wrap a blank pixel buffer in a captured image, as the capture backends do.
    *
    * @param width Image width in pixels.
    * @param height Image height in pixels.
+   * @param pixel_format CoreVideo format of the image; NV12 or BGRA.
    * @return Captured image holding retained sample and pixel buffers.
    */
-  std::shared_ptr<platf::av_img_t> make_image(int width, int height) {
+  std::shared_ptr<platf::av_img_t> make_image(int width, int height, OSType pixel_format = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) {
     CVPixelBufferRef pixel_buffer = nullptr;
     const void *keys[] {kCVPixelBufferIOSurfacePropertiesKey};
     const void *values[] {CFDictionaryCreate(kCFAllocatorDefault, nullptr, nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks)};
     CFDictionaryRef attributes = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     CFRelease(values[0]);
-    CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, attributes, &pixel_buffer);
+    CVPixelBufferCreate(kCFAllocatorDefault, width, height, pixel_format, attributes, &pixel_buffer);
     CFRelease(attributes);
 
     CVPixelBufferLockBaseAddress(pixel_buffer, 0);
-    for (size_t plane = 0; plane < CVPixelBufferGetPlaneCount(pixel_buffer); ++plane) {
-      std::memset(CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, plane), plane == 0 ? 16 : 128, CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, plane) * CVPixelBufferGetHeightOfPlane(pixel_buffer, plane));
+    if (CVPixelBufferIsPlanar(pixel_buffer)) {
+      for (size_t plane = 0; plane < CVPixelBufferGetPlaneCount(pixel_buffer); ++plane) {
+        std::memset(CVPixelBufferGetBaseAddressOfPlane(pixel_buffer, plane), plane == 0 ? 16 : 128, CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer, plane) * CVPixelBufferGetHeightOfPlane(pixel_buffer, plane));
+      }
+    } else {
+      std::memset(CVPixelBufferGetBaseAddress(pixel_buffer), 0, CVPixelBufferGetBytesPerRow(pixel_buffer) * CVPixelBufferGetHeight(pixel_buffer));
     }
     CVPixelBufferUnlockBaseAddress(pixel_buffer, 0);
 
@@ -94,6 +99,49 @@ namespace {
       units.emplace_back(bytes + start, bytes + size);
     }
     return units;
+  }
+
+  /**
+   * @brief Read chroma_format_idc from an HEVC SPS NAL unit.
+   *
+   * @param nal SPS NAL unit, including its two-byte header.
+   * @return chroma_format_idc: 1 for 4:2:0, 3 for 4:4:4; -1 when the SPS has sub-layers this reader skips.
+   */
+  int hevc_chroma_format_idc(const std::vector<uint8_t> &nal) {
+    std::vector<uint8_t> rbsp;
+    for (size_t i = 0; i < nal.size(); ++i) {
+      if (i >= 2 && nal[i] == 3 && nal[i - 1] == 0 && nal[i - 2] == 0) {
+        continue;
+      }
+      rbsp.push_back(nal[i]);
+    }
+
+    size_t bit = 0;
+    auto read_bit = [&]() {
+      const int value = (rbsp[bit / 8] >> (7 - bit % 8)) & 1;
+      ++bit;
+      return value;
+    };
+    auto read_ue = [&]() {
+      int zeros = 0;
+      while (!read_bit()) {
+        ++zeros;
+      }
+      int value = 0;
+      for (int i = 0; i < zeros; ++i) {
+        value = (value << 1) | read_bit();
+      }
+      return (1 << zeros) - 1 + value;
+    };
+
+    if ((rbsp[2] >> 1) & 7) {
+      return -1;
+    }
+    // NAL header, sps_video_parameter_set_id, sps_max_sub_layers_minus1, sps_temporal_id_nesting_flag,
+    // then a profile_tier_level without sub-layers.
+    bit = 16 + 4 + 3 + 1 + 96;
+    read_ue();  // sps_seq_parameter_set_id
+    return read_ue();
   }
 
   /**
@@ -142,15 +190,17 @@ namespace {
    * @brief Stream configuration used by the encoder tests.
    *
    * @param video_format 0 for H.264, 1 for HEVC.
+   * @param yuv444 Whether the stream uses 4:4:4 chroma sampling.
    * @return Configuration for a small 60 fps stream.
    */
-  video::config_t test_config(int video_format) {
+  video::config_t test_config(int video_format, bool yuv444 = false) {
     video::config_t config {};
     config.width = 256;
     config.height = 144;
     config.framerate = 60;
     config.bitrate = 2000;
     config.videoFormat = video_format;
+    config.chromaSamplingType = yuv444 ? 1 : 0;
     return config;
   }
 
@@ -181,12 +231,13 @@ namespace {
      * @brief Create a session fed with a blank frame.
      *
      * @param video_format 0 for H.264, 1 for HEVC.
+     * @param yuv444 Whether to encode 4:4:4 from BGRA input.
      * @return Ready session, or null when this machine cannot encode the format.
      */
-    std::unique_ptr<video::videotoolbox_encode_session_t> make_session(int video_format) {
-      const auto config = test_config(video_format);
+    std::unique_ptr<video::videotoolbox_encode_session_t> make_session(int video_format, bool yuv444 = false) {
+      const auto config = test_config(video_format, yuv444);
       auto device = std::make_unique<platf::videotoolbox_encode_device_t>();
-      if (device->init(platf::pix_fmt_e::nv12, nullptr, nullptr)) {
+      if (device->init(yuv444 ? platf::pix_fmt_e::yuv444p : platf::pix_fmt_e::nv12, nullptr, nullptr)) {
         return nullptr;
       }
       device->colorspace = video::colorspace_from_client_config(config, false);
@@ -196,7 +247,7 @@ namespace {
         return nullptr;
       }
 
-      auto img = make_image(config.width, config.height);
+      auto img = make_image(config.width, config.height, yuv444 ? kCVPixelFormatType_32BGRA : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
       if (session->convert(*img)) {
         return nullptr;
       }
@@ -291,9 +342,18 @@ TEST(VideoToolboxMappings, ColorProperties) {
   EXPECT_TRUE(CFEqual(video::vt::ycbcr_matrix(colorspace), kCVImageBufferYCbCrMatrix_ITU_R_2020));
 }
 
+TEST(VideoToolboxMappings, HevcProfiles) {
+  EXPECT_TRUE(CFEqual(video::vt::hevc_profile(8, false), kVTProfileLevel_HEVC_Main_AutoLevel));
+  EXPECT_TRUE(CFEqual(video::vt::hevc_profile(10, false), kVTProfileLevel_HEVC_Main10_AutoLevel));
+  EXPECT_TRUE(CFEqual(video::vt::hevc_profile(8, true), CFSTR("HEVC_Main444_AutoLevel")));
+  EXPECT_TRUE(CFEqual(video::vt::hevc_profile(10, true), CFSTR("HEVC_Main44410_AutoLevel")));
+}
+
 TEST(VideoToolboxEncodeDevice, PixelFormats) {
   EXPECT_EQ(platf::videotoolbox_pixel_format(platf::pix_fmt_e::nv12), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
   EXPECT_EQ(platf::videotoolbox_pixel_format(platf::pix_fmt_e::p010), kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange);
+  EXPECT_EQ(platf::videotoolbox_pixel_format(platf::pix_fmt_e::yuv444p), kCVPixelFormatType_32BGRA);
+  EXPECT_EQ(platf::videotoolbox_pixel_format(platf::pix_fmt_e::yuv444p16), 0U);
   EXPECT_EQ(platf::videotoolbox_pixel_format(platf::pix_fmt_e::yuv420p), 0U);
 }
 
@@ -423,6 +483,50 @@ TEST_F(VideoToolboxEncodeTest, HevcKeyframesCarryParameterSets) {
   EXPECT_EQ((units[0][0] >> 1) & 0x3F, 32);  // VPS
   EXPECT_EQ((units[1][0] >> 1) & 0x3F, 33);  // SPS
   EXPECT_EQ((units[2][0] >> 1) & 0x3F, 34);  // PPS
+}
+
+TEST_F(VideoToolboxEncodeTest, Hevc444SessionEncodesFullChroma) {
+  auto session = make_session(1, true);
+  if (!session) {
+    GTEST_SKIP() << "VideoToolbox HEVC 4:4:4 encoding is unavailable";
+  }
+  // With low-latency rate control the encoder would fall back to 4:2:0.
+  EXPECT_FALSE(session->low_latency_rate_control());
+
+  session->request_idr_frame();
+  ASSERT_EQ(session->encode_frame(1, packets, nullptr, std::nullopt), 0);
+  auto packet = packets->pop(2s);
+  ASSERT_TRUE(packet);
+
+  const auto units = split_nal_units(packet->data(), packet->data_size());
+  ASSERT_GE(units.size(), 2U);
+  ASSERT_EQ((units[1][0] >> 1) & 0x3F, 33);  // SPS
+  EXPECT_EQ(hevc_chroma_format_idc(units[1]), 3);
+}
+
+TEST_F(VideoToolboxEncodeTest, Hevc420SessionStaysAt420) {
+  auto session = make_session(1);
+  if (!session) {
+    GTEST_SKIP() << "VideoToolbox HEVC encoding is unavailable";
+  }
+
+  session->request_idr_frame();
+  ASSERT_EQ(session->encode_frame(1, packets, nullptr, std::nullopt), 0);
+  auto packet = packets->pop(2s);
+  ASSERT_TRUE(packet);
+
+  const auto units = split_nal_units(packet->data(), packet->data_size());
+  ASSERT_GE(units.size(), 2U);
+  EXPECT_EQ(hevc_chroma_format_idc(units[1]), 1);
+}
+
+TEST_F(VideoToolboxEncodeTest, H264444IsRejected) {
+  const auto config = test_config(0, true);
+  auto device = std::make_unique<platf::videotoolbox_encode_device_t>();
+  ASSERT_EQ(device->init(platf::pix_fmt_e::yuv444p, nullptr, nullptr), 0);
+
+  video::videotoolbox_encode_session_t session {config, std::move(device)};
+  EXPECT_FALSE(session.init(video::videotoolbox.codec_from_config(config)));
 }
 
 TEST_F(VideoToolboxEncodeTest, EncodeWithoutAFrameFails) {

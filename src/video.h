@@ -328,13 +328,20 @@ namespace video {
      *
      * @param format_8bit Platform 8-bit pixel format.
      * @param format_10bit Platform 10-bit pixel format.
+     * @param format_yuv444_8bit Platform 8-bit YUV 4:4:4 pixel format.
+     * @param format_yuv444_10bit Platform 10-bit YUV 4:4:4 pixel format.
      */
-    encoder_platform_formats_videotoolbox(const platf::pix_fmt_e &format_8bit, const platf::pix_fmt_e &format_10bit) {
+    encoder_platform_formats_videotoolbox(
+      const platf::pix_fmt_e &format_8bit,
+      const platf::pix_fmt_e &format_10bit,
+      const platf::pix_fmt_e &format_yuv444_8bit,
+      const platf::pix_fmt_e &format_yuv444_10bit
+    ) {
       encoder_platform_formats_t::dev_type = platf::mem_type_e::videotoolbox;
       encoder_platform_formats_t::pix_fmt_8bit = format_8bit;
       encoder_platform_formats_t::pix_fmt_10bit = format_10bit;
-      encoder_platform_formats_t::pix_fmt_yuv444_8bit = platf::pix_fmt_e::unknown;
-      encoder_platform_formats_t::pix_fmt_yuv444_10bit = platf::pix_fmt_e::unknown;
+      encoder_platform_formats_t::pix_fmt_yuv444_8bit = format_yuv444_8bit;
+      encoder_platform_formats_t::pix_fmt_yuv444_10bit = format_yuv444_10bit;
     }
   };
 

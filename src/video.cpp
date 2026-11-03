@@ -1378,7 +1378,10 @@ namespace video {
     "videotoolbox"sv,
     std::make_unique<encoder_platform_formats_videotoolbox>(
       platf::pix_fmt_e::nv12,
-      platf::pix_fmt_e::p010
+      platf::pix_fmt_e::p010,
+      platf::pix_fmt_e::yuv444p,
+      // Capture has no 10-bit RGB format the encoder takes for HDR 4:4:4.
+      platf::pix_fmt_e::unknown
     ),
     // Option names are VideoToolbox session properties; see VTCompressionProperties.h.
     {
@@ -1437,7 +1440,7 @@ namespace video {
       "h264_videotoolbox"s,
       {},  // capabilities
     },
-    PARALLEL_ENCODING
+    PARALLEL_ENCODING | YUV444_SUPPORT
   };
 #endif
 
