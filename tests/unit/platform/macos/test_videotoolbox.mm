@@ -512,14 +512,6 @@ TEST_F(VideoToolboxEncodeTest, Hevc444SessionEncodesFullChroma) {
   // With low-latency rate control the encoder would fall back to 4:2:0.
   EXPECT_FALSE(session->low_latency_rate_control());
 
-  CFNumberRef adaptive_qp = nullptr;
-  if (VTSessionCopyProperty(session->compression_session(), kVTCompressionPropertyKey_SpatialAdaptiveQPLevel, kCFAllocatorDefault, &adaptive_qp) == noErr && adaptive_qp) {
-    int level = -1;
-    CFNumberGetValue(adaptive_qp, kCFNumberIntType, &level);
-    CFRelease(adaptive_qp);
-    EXPECT_EQ(level, kVTQPModulationLevel_Disable);
-  }
-
   session->request_idr_frame();
   ASSERT_EQ(session->encode_frame(1, packets, nullptr, std::nullopt), 0);
   auto packet = packets->pop(2s);

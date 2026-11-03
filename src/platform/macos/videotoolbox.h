@@ -265,13 +265,6 @@ namespace video {
      */
     bool low_latency_rate_control() const;
 
-    /**
-     * @brief Return the underlying compression session, so its properties can be inspected.
-     *
-     * @return The session, or null before init() succeeds.
-     */
-    VTCompressionSessionRef compression_session() const;
-
   private:
     /**
      * @brief Per-frame state carried from submission to the output callback.

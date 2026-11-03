@@ -552,10 +552,6 @@ namespace video {
     return low_latency;
   }
 
-  VTCompressionSessionRef videotoolbox_encode_session_t::compression_session() const {
-    return session;
-  }
-
   int videotoolbox_encode_session_t::encode_frame(int64_t frame_nr, const safe::mail_raw_t::queue_t<packet_t> &packets, stream::session_t *channel_data, std::optional<std::chrono::steady_clock::time_point> frame_timestamp) {
     if (!session || !device || !device->current_frame()) {
       return -1;
