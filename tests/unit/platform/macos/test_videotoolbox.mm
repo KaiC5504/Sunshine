@@ -398,6 +398,7 @@ TEST(VideoToolboxEncodeDevice, InitConfiguresCaptureAndRejectsUnsupportedFormats
 
   platf::videotoolbox_encode_device_t unsupported;
   EXPECT_NE(unsupported.init(platf::pix_fmt_e::yuv420p, nullptr, nullptr), 0);
+  EXPECT_NE(unsupported.init(platf::pix_fmt_e::unknown, nullptr, nullptr), 0);
 
   platf::videotoolbox_encode_device_t without_callbacks;
   EXPECT_EQ(without_callbacks.init(platf::pix_fmt_e::nv12, nullptr, nullptr), 0);

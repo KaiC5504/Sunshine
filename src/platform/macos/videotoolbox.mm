@@ -191,7 +191,8 @@ namespace platf {
   int videotoolbox_encode_device_t::init(pix_fmt_e pix_fmt, resolution_fn_t resolution_fn, const pixel_format_fn_t &pixel_format_fn) {
     const auto pixel_format = videotoolbox_pixel_format(pix_fmt);
     if (!pixel_format) {
-      BOOST_LOG(error) << "VideoToolbox: unsupported pixel format "sv << from_pix_fmt(pix_fmt);
+      // Unknown is how the encoder table marks a mode it doesn't offer, which every startup probes.
+      BOOST_LOG(pix_fmt == pix_fmt_e::unknown ? debug : error) << "VideoToolbox: unsupported pixel format "sv << from_pix_fmt(pix_fmt);
       return -1;
     }
 

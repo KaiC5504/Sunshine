@@ -60,9 +60,10 @@ export LIBRARY_PATH="$icu4c_root/lib"
 export MACOSX_DEPLOYMENT_TARGET="$(sw_vers -productVersion | cut -d. -f1).0"
 
 # A release-style version, so the web UI doesn't offer releases from before this build as updates.
-# Day granularity: the version is a compile definition, and changing it rebuilds everything.
+# Day granularity, since the version is a compile definition and changing it rebuilds everything;
+# the end of the day, so releases published earlier that day don't count as updates.
 export BRANCH=personal
-export BUILD_VERSION="$(date -u +%Y.%-m%d).0"
+export BUILD_VERSION="$(date -u +%Y.%-m%d).235959"
 # Same -Werror as the release workflow, so a release never fails on a warning seen here first.
 settings=(-DBUILD_WERROR=ON)
 [[ -z "$identity" ]] || settings+=(-DAPPLE_CODESIGN_IDENTITY="$identity")
