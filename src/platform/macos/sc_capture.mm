@@ -92,6 +92,7 @@ API_AVAILABLE(macos(14.0))
     self.displayID = displayID;
     self.frameRate = frameRate;
     self.pixelFormat = kCVPixelFormatType_32BGRA;
+    _showsCursor = YES;
 
     if (mode) {
       self.frameWidth = (int) CGDisplayModeGetPixelWidth(mode);
@@ -125,6 +126,33 @@ API_AVAILABLE(macos(14.0))
 - (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight {
   self.frameWidth = frameWidth;
   self.frameHeight = frameHeight;
+}
+
+- (void)updateShowsCursor:(BOOL)showsCursor {
+  SCStream *stream = nil;
+  SCStreamConfiguration *config = nil;
+
+  @synchronized(self) {
+    if (_showsCursor == showsCursor) {
+      return;
+    }
+    _showsCursor = showsCursor;
+    self.streamConfiguration.showsCursor = showsCursor;
+    stream = [self.stream retain];
+    config = [self.streamConfiguration retain];
+  }
+
+  BOOST_LOG(info) << "SCCapture pointer "sv << (showsCursor ? "drawn into frames"sv : "left to the client"sv);
+  if (stream && config) {
+    [stream updateConfiguration:config
+              completionHandler:^(NSError *update_error) {
+                if (update_error) {
+                  BOOST_LOG(warning) << "SCCapture couldn't change pointer drawing: "sv << error_description(update_error);
+                }
+              }];
+  }
+  [config release];
+  [stream release];
 }
 
 - (SCDisplay *)findDisplayWithID:(CGDirectDisplayID)displayID {
@@ -263,7 +291,7 @@ API_AVAILABLE(macos(14.0))
     config.width = self.frameWidth;
     config.height = self.frameHeight;
     config.pixelFormat = self.pixelFormat;
-    config.showsCursor = YES;
+    config.showsCursor = self.showsCursor;
     config.captureResolution = SCCaptureResolutionBest;
     config.preservesAspectRatio = YES;
     // Slightly below the target interval: an interval of exactly 1/fps beats against

@@ -131,7 +131,9 @@ endif()
 list(APPEND PLATFORM_TARGET_FILES ${NVENC_SOURCES})
 
 if(NOT APPLE)
-    list(APPEND PLATFORM_TARGET_FILES "${CMAKE_SOURCE_DIR}/src/platform/clipboard_unsupported.cpp")
+    list(APPEND PLATFORM_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/platform/clipboard_unsupported.cpp"
+            "${CMAKE_SOURCE_DIR}/src/platform/cursor_unsupported.cpp")
 endif()
 
 set(SUNSHINE_TARGET_FILES
@@ -147,6 +149,8 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/cbs.cpp"
         "${CMAKE_SOURCE_DIR}/src/clipboard_sync.cpp"
         "${CMAKE_SOURCE_DIR}/src/clipboard_sync.h"
+        "${CMAKE_SOURCE_DIR}/src/cursor_sync.cpp"
+        "${CMAKE_SOURCE_DIR}/src/cursor_sync.h"
         "${CMAKE_SOURCE_DIR}/src/utility.h"
         "${CMAKE_SOURCE_DIR}/src/uuid.h"
         "${CMAKE_SOURCE_DIR}/src/config.h"

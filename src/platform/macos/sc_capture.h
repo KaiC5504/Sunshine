@@ -88,6 +88,10 @@ API_AVAILABLE(macos(14.0))
  * @brief Latest captured sample buffer, replaced as newer frames arrive.
  */
 @property (nonatomic, assign) CMSampleBufferRef latestSampleBuffer;
+/**
+ * @brief Whether the pointer is drawn into captured frames; change it with updateShowsCursor:.
+ */
+@property (nonatomic, assign, readonly) BOOL showsCursor;
 
 /**
  * @brief Check whether ScreenCaptureKit screenshot capture is available on this system.
@@ -126,6 +130,12 @@ API_AVAILABLE(macos(14.0))
  * @param frameHeight Output frame height in pixels.
  */
 - (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight;
+/**
+ * @brief Draw the pointer into frames or leave it out, also on a running stream.
+ *
+ * @param showsCursor `NO` when the client draws the pointer itself.
+ */
+- (void)updateShowsCursor:(BOOL)showsCursor;
 /**
  * @brief Create, configure, and start the capture stream.
  *

@@ -29,6 +29,7 @@
 // local includes
 #include "clipboard_sync.h"
 #include "config.h"
+#include "cursor_sync.h"
 #include "display_device.h"
 #include "file_handler.h"
 #include "globals.h"
@@ -1905,6 +1906,62 @@ namespace nvhttp {
     response->write(SimpleWeb::StatusCode::success_ok, nlohmann::json {{"sessions", active}}.dump(), headers);
   }
 
+  /**
+   * @brief Write a pointer sync reply.
+   *
+   * @param response HTTP response object to populate.
+   * @param reply Reply produced by the pointer hub.
+   */
+  void write_cursor_reply(const resp_https_t &response, const cursor_sync::reply_t &reply) {
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace(std::string {cursor_sync::sequence_header}, std::to_string(reply.sequence));
+    headers.emplace(std::string {cursor_sync::visible_header}, reply.visible ? "1" : "0");
+    if (!reply.png.empty()) {
+      headers.emplace("Content-Type", std::string {cursor_sync::png_mime_type});
+      headers.emplace(std::string {cursor_sync::hotspot_header}, std::to_string(reply.hotspot_x) + ',' + std::to_string(reply.hotspot_y));
+    }
+    response->write(static_cast<SimpleWeb::StatusCode>(reply.status), reply.png, headers);
+  }
+
+  /**
+   * @brief Send the host pointer to a streaming client that draws it locally.
+   *
+   * Clients poll with `?since=<sequence>&width=<stream width>&local=1` and get an answer once the
+   * pointer changes, or 204 after a while. While they keep polling with `local=1` the pointer is
+   * left out of the video; `local=0` puts it back.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void cursor_get(resp_https_t response, req_https_t request) {
+    const auto client = request_client(request);
+    if (!client) {
+      write_status(response, 401, "The client is not authorized."sv);
+      return;
+    }
+    if (!rtsp_stream::has_active_session(client->cert)) {
+      write_status(response, 409, "Pointer sync is only available while streaming."sv);
+      return;
+    }
+
+    auto *hub = cursor_sync::hub();
+    if (!hub) {
+      write_status(response, 501, "Pointer sync is not supported on this host."sv);
+      return;
+    }
+
+    const auto args = request->parse_query_string();
+    const auto argument = [&args](const std::string &key) -> std::optional<std::int64_t> {
+      const auto value = args.find(key);
+      return value == args.end() ? std::nullopt : cursor_sync::parse_number(value->second);
+    };
+    const auto respond = [response](const cursor_sync::reply_t &reply) {
+      write_cursor_reply(response, reply);
+    };
+    const auto stream_width = static_cast<int>(argument("width").value_or(0));
+    hub->poll(argument("since"), stream_width, argument("local").value_or(1) != 0, respond, cursor_sync::hub_t::clock::now());
+  }
+
   void setup(const std::string &pkey, const std::string &cert) {
     conf_intern.pkey = pkey;
     conf_intern.servercert = cert;
@@ -2023,6 +2080,7 @@ namespace nvhttp {
     https_server.resource["^/actions/clipboard$"]["GET"] = clipboard_get;
     https_server.resource["^/actions/clipboard$"]["POST"] = clipboard_post;
     https_server.resource["^/actions/clipboard/file$"]["GET"] = clipboard_file_get;
+    https_server.resource["^/actions/cursor$"]["GET"] = cursor_get;
     https_server.resource["^/actions/files$"]["POST"] = files_post;
     https_server.resource["^/actions/sessions$"]["GET"] = sessions;
     https_server.on_verified = remember_verified_connection;

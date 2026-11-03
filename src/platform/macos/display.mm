@@ -16,6 +16,7 @@
 
 // local includes
 #include "src/config.h"
+#include "src/cursor_sync.h"
 #include "src/display_device.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
@@ -305,6 +306,8 @@ namespace platf {
       }
 
       void wait_frame(std::chrono::nanoseconds timeout) override {
+        // Checked on every wait, not per frame: a static screen delivers no frames.
+        [capture updateShowsCursor:!cursor_sync::client_draws_pointer()];
         dispatch_semaphore_wait(frame_signal, dispatch_time(DISPATCH_TIME_NOW, timeout.count()));
       }
 
