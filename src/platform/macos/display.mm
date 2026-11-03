@@ -433,6 +433,7 @@ namespace platf {
       auto *capture = av_capture;
       const auto status = device->init(
         pix_fmt,
+        // AVFoundation scales with the display's own scaler; only ScreenCaptureKit captures at full size.
         [capture](int width, int height) {
           [capture setFrameWidth:width frameHeight:height];
         },
@@ -556,8 +557,9 @@ namespace platf {
       auto *capture = sc_capture;
       const auto status = device->init(
         pix_fmt,
-        [capture](int width, int height) {
-          [capture setFrameWidth:width frameHeight:height];
+        [capture, display_width = width, display_height = height](int width, int height) {
+          const auto [capture_width, capture_height] = videotoolbox_capture_size(display_width, display_height, width, height);
+          [capture setFrameWidth:capture_width frameHeight:capture_height];
         },
         [capture](OSType pixel_format) {
           capture.pixelFormat = pixel_format;
@@ -649,7 +651,8 @@ namespace platf {
 
           if (hwdevice_type == platf::mem_type_e::videotoolbox) {
             const auto pixel_format {videotoolbox_pixel_format(config)};
-            [display->sc_capture setFrameWidth:config.width frameHeight:config.height];
+            const auto [capture_width, capture_height] = videotoolbox_capture_size(display->width, display->height, config.width, config.height);
+            [display->sc_capture setFrameWidth:capture_width frameHeight:capture_height];
             display->sc_capture.pixelFormat = pixel_format;
           }
 

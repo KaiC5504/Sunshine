@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <vector>
 
 // platform includes
@@ -37,6 +38,21 @@ namespace platf {
   OSType videotoolbox_pixel_format(pix_fmt_e pix_fmt);
 
   /**
+   * @brief Pick the size to capture a display at for a stream.
+   *
+   * ScreenCaptureKit's own scaling softens text when the display's pixels don't divide evenly into the
+   * stream's, as with a 1920x1080 HiDPI desktop (3840x2160 pixels) streamed at 2560x1440. Such displays
+   * are captured at full size, and the encode device shrinks each frame with a Lanczos filter instead.
+   *
+   * @param display_width Display width in pixels.
+   * @param display_height Display height in pixels.
+   * @param stream_width Encoded frame width in pixels.
+   * @param stream_height Encoded frame height in pixels.
+   * @return The display's size when the encode device should shrink frames, otherwise the stream's.
+   */
+  std::pair<int, int> videotoolbox_capture_size(int display_width, int display_height, int stream_width, int stream_height);
+
+  /**
    * @brief Encode device that hands captured CoreVideo pixel buffers to VideoToolbox without copying.
    */
   class videotoolbox_encode_device_t: public encode_device_t {
@@ -51,6 +67,11 @@ namespace platf {
      */
     using pixel_format_fn_t = std::function<void(OSType pixel_format)>;
 
+    /**
+     * @brief Construct a device that passes captured frames through until set_resolution() is called.
+     */
+    videotoolbox_encode_device_t();
+
     ~videotoolbox_encode_device_t() override;
 
     /**
@@ -64,20 +85,23 @@ namespace platf {
     int init(pix_fmt_e pix_fmt, resolution_fn_t resolution_fn, const pixel_format_fn_t &pixel_format_fn);
 
     /**
-     * @brief Retain the pixel buffer of a captured image as the next frame to encode.
+     * @brief Take a captured image as the next frame to encode.
+     *
+     * Frames already at the encode resolution are retained as they are; others are shrunk (or grown)
+     * to it with a Lanczos filter on the GPU.
      *
      * @param img Captured image; must be an av_img_t carrying a pixel buffer.
-     * @return 0 on success, nonzero when the image has no pixel buffer.
+     * @return 0 on success, nonzero when the image has no pixel buffer or can't be scaled.
      */
     int convert(img_t &img) override;
 
     /**
-     * @brief Ask the capture backend to deliver frames at the encode resolution.
+     * @brief Set the encode resolution and ask the capture backend for frames to match.
      *
      * @param width Encoded frame width in pixels.
      * @param height Encoded frame height in pixels.
      */
-    void set_resolution(int width, int height) const;
+    void set_resolution(int width, int height);
 
     /**
      * @brief Return the most recently converted pixel buffer.
@@ -87,8 +111,13 @@ namespace platf {
     CVPixelBufferRef current_frame() const;
 
   private:
+    struct scaler_t;
+
     resolution_fn_t resolution_fn;  ///< Callback that resizes the capture output.
     CVPixelBufferRef current = nullptr;  ///< Retained pixel buffer of the next frame to encode.
+    int target_width = 0;  ///< Encode width, or 0 to take frames at any size.
+    int target_height = 0;  ///< Encode height, or 0 to take frames at any size.
+    std::unique_ptr<scaler_t> scaler;  ///< GPU scaler, created for the first frame that needs it.
   };
 }  // namespace platf
 

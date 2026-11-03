@@ -38,7 +38,7 @@ namespace {
    *
    * @param width Image width in pixels.
    * @param height Image height in pixels.
-   * @param pixel_format CoreVideo format of the image; NV12 or BGRA.
+   * @param pixel_format CoreVideo format of the image; NV12 or a packed RGB format.
    * @return Captured image holding retained sample and pixel buffers.
    */
   std::shared_ptr<platf::av_img_t> make_image(int width, int height, OSType pixel_format = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange) {
@@ -403,6 +403,74 @@ TEST(VideoToolboxEncodeDevice, InitConfiguresCaptureAndRejectsUnsupportedFormats
   platf::videotoolbox_encode_device_t without_callbacks;
   EXPECT_EQ(without_callbacks.init(platf::pix_fmt_e::nv12, nullptr, nullptr), 0);
   without_callbacks.set_resolution(640, 360);
+}
+
+TEST(VideoToolboxEncodeDevice, CaptureSizeShrinksUnevenRatiosItself) {
+  EXPECT_EQ(platf::videotoolbox_capture_size(3840, 2160, 2560, 1440), std::make_pair(3840, 2160));
+  EXPECT_EQ(platf::videotoolbox_capture_size(4096, 2304, 2560, 1440), std::make_pair(4096, 2304));
+}
+
+TEST(VideoToolboxEncodeDevice, CaptureSizeLeavesOtherCasesToScreenCaptureKit) {
+  // Whole-number ratio
+  EXPECT_EQ(platf::videotoolbox_capture_size(5120, 2880, 2560, 1440), std::make_pair(2560, 1440));
+  // Same size
+  EXPECT_EQ(platf::videotoolbox_capture_size(2560, 1440, 2560, 1440), std::make_pair(2560, 1440));
+  // Growing
+  EXPECT_EQ(platf::videotoolbox_capture_size(1920, 1080, 2560, 1440), std::make_pair(2560, 1440));
+  // Different shape
+  EXPECT_EQ(platf::videotoolbox_capture_size(3840, 2400, 2560, 1440), std::make_pair(2560, 1440));
+  // No stream size yet
+  EXPECT_EQ(platf::videotoolbox_capture_size(3840, 2160, 0, 0), std::make_pair(0, 0));
+}
+
+TEST(VideoToolboxEncodeDevice, ConvertScalesFramesToTheEncodeResolution) {
+  platf::videotoolbox_encode_device_t device;
+  ASSERT_EQ(device.init(platf::pix_fmt_e::yuv444p, nullptr, nullptr), 0);
+  device.set_resolution(64, 36);
+
+  auto bgra = make_image(96, 54, kCVPixelFormatType_32BGRA);
+  ASSERT_EQ(device.convert(*bgra), 0);
+  CVPixelBufferRef scaled = device.current_frame();
+  ASSERT_NE(scaled, bgra->pixel_buffer->buf);
+  EXPECT_EQ(CVPixelBufferGetWidth(scaled), 64U);
+  EXPECT_EQ(CVPixelBufferGetHeight(scaled), 36U);
+  EXPECT_EQ(CVPixelBufferGetPixelFormatType(scaled), kCVPixelFormatType_32BGRA);
+
+  auto nv12 = make_image(96, 54);
+  ASSERT_EQ(device.convert(*nv12), 0);
+  scaled = device.current_frame();
+  EXPECT_EQ(CVPixelBufferGetWidth(scaled), 64U);
+  EXPECT_EQ(CVPixelBufferGetHeight(scaled), 36U);
+  ASSERT_EQ(CVPixelBufferGetPixelFormatType(scaled), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
+
+  // Each plane is filtered on its own, so a flat frame stays flat.
+  CVPixelBufferLockBaseAddress(scaled, kCVPixelBufferLock_ReadOnly);
+  const auto *luma = static_cast<const uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(scaled, 0));
+  const auto *chroma = static_cast<const uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(scaled, 1));
+  const auto luma_stride = CVPixelBufferGetBytesPerRowOfPlane(scaled, 0);
+  EXPECT_NEAR(luma[0], 16, 1);
+  EXPECT_NEAR(luma[35 * luma_stride + 63], 16, 1);
+  EXPECT_NEAR(chroma[0], 128, 1);
+  EXPECT_NEAR(chroma[1], 128, 1);
+  CVPixelBufferUnlockBaseAddress(scaled, kCVPixelBufferLock_ReadOnly);
+}
+
+TEST(VideoToolboxEncodeDevice, ConvertPassesFramesAtTheEncodeResolutionThrough) {
+  platf::videotoolbox_encode_device_t device;
+  device.set_resolution(64, 64);
+
+  auto image = make_image(64, 64);
+  ASSERT_EQ(device.convert(*image), 0);
+  EXPECT_EQ(device.current_frame(), image->pixel_buffer->buf);
+}
+
+TEST(VideoToolboxEncodeDevice, ConvertRejectsFramesItCannotScale) {
+  platf::videotoolbox_encode_device_t device;
+  device.set_resolution(32, 32);
+
+  auto image = make_image(64, 64, kCVPixelFormatType_32ARGB);
+  EXPECT_NE(device.convert(*image), 0);
+  EXPECT_EQ(device.current_frame(), nullptr);
 }
 
 TEST(VideoToolboxEncodeDevice, ConvertRetainsTheLatestPixelBuffer) {

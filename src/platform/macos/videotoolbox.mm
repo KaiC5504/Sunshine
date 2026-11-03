@@ -6,10 +6,15 @@
  */
 // standard includes
 #include <algorithm>
+#include <cstdlib>
 #include <iterator>
 #include <string>
 #include <unordered_map>
 #include <utility>
+
+// platform includes
+#import <Metal/Metal.h>
+#import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 
 // local includes
 #include "src/config.h"
@@ -165,6 +170,28 @@ namespace {
     CFRelease(number);
     return applied;
   }
+
+  /**
+   * @brief Metal format of one plane of a capture pixel format, so each plane can be scaled on its own.
+   *
+   * @param format CoreVideo pixel format of the frame.
+   * @param plane Plane index; luma is 0 and interleaved chroma is 1.
+   * @return Metal pixel format, or MTLPixelFormatInvalid for formats the scaler doesn't handle.
+   */
+  MTLPixelFormat plane_format(OSType format, size_t plane) {
+    switch (format) {
+      case kCVPixelFormatType_32BGRA:
+        return plane == 0 ? MTLPixelFormatBGRA8Unorm : MTLPixelFormatInvalid;
+      case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+      case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+        return plane == 0 ? MTLPixelFormatR8Unorm : MTLPixelFormatRG8Unorm;
+      case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+      case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+        return plane == 0 ? MTLPixelFormatR16Unorm : MTLPixelFormatRG16Unorm;
+      default:
+        return MTLPixelFormatInvalid;
+    }
+  }
 }  // namespace
 
 namespace platf {
@@ -181,6 +208,189 @@ namespace platf {
         return 0;
     }
   }
+
+  std::pair<int, int> videotoolbox_capture_size(int display_width, int display_height, int stream_width, int stream_height) {
+    const std::pair stream {stream_width, stream_height};
+    if (stream_width <= 0 || stream_height <= 0 || display_width <= stream_width || display_height <= stream_height) {
+      return stream;
+    }
+
+    // A different shape would be stretched; ScreenCaptureKit letterboxes it instead.
+    const auto display_area = static_cast<int64_t>(display_width) * stream_height;
+    const auto stream_area = static_cast<int64_t>(display_height) * stream_width;
+    if (std::llabs(display_area - stream_area) * 100 > display_area) {
+      return stream;
+    }
+
+    // Whole-number ratios average whole pixels, which ScreenCaptureKit already does cleanly and for free.
+    if (display_width % stream_width == 0 && display_height % stream_height == 0 && display_width / stream_width == display_height / stream_height) {
+      return stream;
+    }
+
+    return {display_width, display_height};
+  }
+
+  /**
+   * @brief Scales captured frames to the encode resolution with Metal Performance Shaders' Lanczos filter.
+   *
+   * Each plane is scaled on its own, so YCbCr frames stay YCbCr: having VideoToolbox convert RGB to 4:2:0
+   * instead made some sessions take 45 ms per frame. Shrinking 3840x2160 to 2560x1440 takes about 1.7 ms.
+   */
+  struct videotoolbox_encode_device_t::scaler_t {
+    id<MTLDevice> device = nil;  ///< GPU that runs the filter.
+    id<MTLCommandQueue> queue = nil;  ///< Queue the filter runs on.
+    MPSImageLanczosScale *lanczos = nil;  ///< The Lanczos filter.
+    CVMetalTextureCacheRef texture_cache = nullptr;  ///< Wraps pixel buffers as Metal textures without copying.
+    CVPixelBufferPoolRef pool = nullptr;  ///< Output buffers; the encoder holds some while it works.
+    OSType pool_format = 0;  ///< Pixel format of the pool's buffers.
+    int pool_width = 0;  ///< Width of the pool's buffers.
+    int pool_height = 0;  ///< Height of the pool's buffers.
+
+    scaler_t() {
+      device = MTLCreateSystemDefaultDevice();
+      if (!device) {
+        return;
+      }
+      queue = [device newCommandQueue];
+      lanczos = [[MPSImageLanczosScale alloc] initWithDevice:device];
+      if (CVMetalTextureCacheCreate(kCFAllocatorDefault, nullptr, device, nullptr, &texture_cache) != kCVReturnSuccess) {
+        texture_cache = nullptr;
+      }
+    }
+
+    ~scaler_t() {
+      if (pool) {
+        CVPixelBufferPoolRelease(pool);
+      }
+      if (texture_cache) {
+        CFRelease(texture_cache);
+      }
+      [lanczos release];
+      [queue release];
+      [device release];
+    }
+
+    scaler_t(const scaler_t &) = delete;
+    scaler_t &operator=(const scaler_t &) = delete;
+
+    /**
+     * @brief Make sure the output pool holds buffers of the given format and size.
+     *
+     * @param format CoreVideo pixel format.
+     * @param width Output width in pixels.
+     * @param height Output height in pixels.
+     * @return True when the pool is ready.
+     */
+    bool ensure_pool(OSType format, int width, int height) {
+      if (pool && pool_format == format && pool_width == width && pool_height == height) {
+        return true;
+      }
+      if (pool) {
+        CVPixelBufferPoolRelease(pool);
+        pool = nullptr;
+      }
+
+      NSDictionary *attributes = @{
+        (NSString *) kCVPixelBufferPixelFormatTypeKey: @(format),
+        (NSString *) kCVPixelBufferWidthKey: @(width),
+        (NSString *) kCVPixelBufferHeightKey: @(height),
+        (NSString *) kCVPixelBufferIOSurfacePropertiesKey: @ {},
+        (NSString *) kCVPixelBufferMetalCompatibilityKey: @YES,
+      };
+      if (CVPixelBufferPoolCreate(kCFAllocatorDefault, nullptr, (__bridge CFDictionaryRef) attributes, &pool) != kCVReturnSuccess) {
+        pool = nullptr;
+        return false;
+      }
+
+      pool_format = format;
+      pool_width = width;
+      pool_height = height;
+      return true;
+    }
+
+    /**
+     * @brief Wrap one plane of a pixel buffer as a Metal texture.
+     *
+     * @param buffer Pixel buffer to wrap.
+     * @param plane Plane index.
+     * @return Retained texture reference, or null on failure.
+     */
+    CVMetalTextureRef plane_texture(CVPixelBufferRef buffer, size_t plane) {
+      const bool planar = CVPixelBufferIsPlanar(buffer);
+      const auto width = planar ? CVPixelBufferGetWidthOfPlane(buffer, plane) : CVPixelBufferGetWidth(buffer);
+      const auto height = planar ? CVPixelBufferGetHeightOfPlane(buffer, plane) : CVPixelBufferGetHeight(buffer);
+      CVMetalTextureRef texture = nullptr;
+      if (CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, texture_cache, buffer, nullptr, plane_format(CVPixelBufferGetPixelFormatType(buffer), plane), width, height, planar ? plane : 0, &texture) != kCVReturnSuccess) {
+        return nullptr;
+      }
+      return texture;
+    }
+
+    /**
+     * @brief Scale a frame to the given size.
+     *
+     * @param source Captured frame.
+     * @param width Output width in pixels.
+     * @param height Output height in pixels.
+     * @return Retained pixel buffer of the scaled frame, or null on failure.
+     */
+    CVPixelBufferRef scale(CVPixelBufferRef source, int width, int height) {
+      const auto format = CVPixelBufferGetPixelFormatType(source);
+      if (!lanczos || !texture_cache || plane_format(format, 0) == MTLPixelFormatInvalid) {
+        return nullptr;
+      }
+
+      @autoreleasepool {
+        if (!ensure_pool(format, width, height)) {
+          return nullptr;
+        }
+
+        CVPixelBufferRef target = nullptr;
+        if (CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &target) != kCVReturnSuccess) {
+          return nullptr;
+        }
+
+        const size_t planes = CVPixelBufferIsPlanar(source) ? CVPixelBufferGetPlaneCount(source) : 1;
+        std::vector<CVMetalTextureRef> textures;
+        id<MTLCommandBuffer> commands = [queue commandBuffer];
+        bool encoded = true;
+        for (size_t plane = 0; plane < planes; ++plane) {
+          CVMetalTextureRef from = plane_texture(source, plane);
+          CVMetalTextureRef to = plane_texture(target, plane);
+          for (auto texture : {from, to}) {
+            if (texture) {
+              textures.push_back(texture);
+            }
+          }
+          if (!from || !to) {
+            encoded = false;
+            break;
+          }
+          [lanczos encodeToCommandBuffer:commands sourceTexture:CVMetalTextureGetTexture(from) destinationTexture:CVMetalTextureGetTexture(to)];
+        }
+
+        if (encoded) {
+          [commands commit];
+          [commands waitUntilCompleted];
+          encoded = commands.status == MTLCommandBufferStatusCompleted;
+        }
+        for (auto texture : textures) {
+          CFRelease(texture);
+        }
+
+        if (!encoded) {
+          CVPixelBufferRelease(target);
+          return nullptr;
+        }
+
+        // Carries the colour tags the encoder reads to convert RGB frames.
+        CVBufferPropagateAttachments(source, target);
+        return target;
+      }
+    }
+  };
+
+  videotoolbox_encode_device_t::videotoolbox_encode_device_t() = default;
 
   videotoolbox_encode_device_t::~videotoolbox_encode_device_t() {
     if (current) {
@@ -209,7 +419,23 @@ namespace platf {
       return -1;
     }
 
-    CVPixelBufferRef next = CVPixelBufferRetain(av_img->pixel_buffer->buf);
+    CVPixelBufferRef captured = av_img->pixel_buffer->buf;
+    const auto width = static_cast<int>(CVPixelBufferGetWidth(captured));
+    const auto height = static_cast<int>(CVPixelBufferGetHeight(captured));
+    CVPixelBufferRef next = nullptr;
+    if (target_width > 0 && target_height > 0 && (width != target_width || height != target_height)) {
+      if (!scaler) {
+        scaler = std::make_unique<scaler_t>();
+        BOOST_LOG(info) << "VideoToolbox: scaling "sv << width << 'x' << height << " captures to "sv << target_width << 'x' << target_height << " with a Lanczos filter"sv;
+      }
+      next = scaler->scale(captured, target_width, target_height);
+      if (!next) {
+        BOOST_LOG(error) << "VideoToolbox: couldn't scale a "sv << width << 'x' << height << " capture"sv;
+        return -1;
+      }
+    } else {
+      next = CVPixelBufferRetain(captured);
+    }
     if (current) {
       CVPixelBufferRelease(current);
     }
@@ -217,7 +443,9 @@ namespace platf {
     return 0;
   }
 
-  void videotoolbox_encode_device_t::set_resolution(int width, int height) const {
+  void videotoolbox_encode_device_t::set_resolution(int width, int height) {
+    target_width = width;
+    target_height = height;
     if (resolution_fn) {
       resolution_fn(width, height);
     }
