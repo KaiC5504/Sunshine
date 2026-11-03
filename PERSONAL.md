@@ -67,7 +67,7 @@ gh workflow run personal-windows.yml -R KaiC5504/moonlight-qt -f release=true
 **Mac Mini (Sunshine)**
 
 1. If Sunshine came from Homebrew: `brew services stop sunshine && brew uninstall sunshine`. Otherwise quit it from the menu bar.
-2. Download `Sunshine-macOS-arm64.dmg` (Apple silicon) or `Sunshine-macOS-x86_64.dmg` (Intel) from
+2. Download `Sunshine-macOS-arm64.dmg` (Apple silicon only; the Intel build was dropped to halve build time) from
    https://github.com/KaiC5504/Sunshine/releases/latest, open it and drag Sunshine into Applications.
 3. Open Sunshine and allow Screen & System Audio Recording and Accessibility when asked.
    The first file copied from Windows also asks for access to the Downloads folder.
