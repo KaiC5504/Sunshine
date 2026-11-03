@@ -443,7 +443,7 @@ TEST(VideoToolboxEncodeDevice, ConvertScalesFramesToTheEncodeResolution) {
   EXPECT_EQ(CVPixelBufferGetHeight(scaled), 36U);
   ASSERT_EQ(CVPixelBufferGetPixelFormatType(scaled), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange);
 
-  // Each plane is filtered on its own, so a flat frame stays flat.
+  // Each plane is filtered on its own, so a flat frame stays flat, edges included.
   CVPixelBufferLockBaseAddress(scaled, kCVPixelBufferLock_ReadOnly);
   const auto *luma = static_cast<const uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(scaled, 0));
   const auto *chroma = static_cast<const uint8_t *>(CVPixelBufferGetBaseAddressOfPlane(scaled, 1));

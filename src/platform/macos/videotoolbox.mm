@@ -253,6 +253,8 @@ namespace platf {
       }
       queue = [device newCommandQueue];
       lanczos = [[MPSImageLanczosScale alloc] initWithDevice:device];
+      // The default reads black past the edges, which darkens the outermost pixels.
+      lanczos.edgeMode = MPSImageEdgeModeClamp;
       if (CVMetalTextureCacheCreate(kCFAllocatorDefault, nullptr, device, nullptr, &texture_cache) != kCVReturnSuccess) {
         texture_cache = nullptr;
       }
