@@ -15,6 +15,9 @@ Personal forks for streaming a headless Mac Mini to Windows laptops:
 | Copy and paste files both ways, or drag files onto the stream window (512 MB per copy, folders are skipped) | Sunshine + Moonlight |
 | "In use by …" badge on the Mac Mini tile when another paired device is streaming | Sunshine + Moonlight |
 | Update notices from these forks; Moonlight installs its own updates without a SmartScreen warning | both |
+| Pointer drawn by Windows in remote desktop mouse mode, so it moves with no stream delay (the Mac stops drawing it into the video) | Sunshine + Moonlight |
+| Native VideoToolbox encoder with HEVC 4:4:4, and captures shrunk with a Lanczos filter for uneven HiDPI sizes | Sunshine |
+| Keyframes paced at twice the stream bitrate, so big 4:4:4 keyframes don't overflow Wi-Fi queues | Sunshine |
 
 Each device needs two switches in Sunshine before the new features work for it (see step 4).
 
@@ -138,6 +141,8 @@ after 5 minutes).
 - Files from the Mac go to `Downloads\Moonlight` on Windows and are put on the Windows clipboard, so Ctrl+V in Explorer pastes them.
 - Files from Windows go to `~/Downloads/Moonlight` on the Mac and are put on the Mac clipboard, so Cmd+V in Finder pastes them.
 - The badge updates every few seconds while Moonlight shows the computer list.
+- In remote desktop mouse mode (Ctrl+Alt+Shift+M toggles it) the pointer is drawn by Windows with the Mac's shape and hides when the Mac hides it. Game mouse mode hands the pointer back to the Mac, and an older Sunshine keeps drawing it in the video.
+- Changing the Mac's display size while streaming restarts capture within half a second, which costs one keyframe.
 
 ## Building on the Mac
 
