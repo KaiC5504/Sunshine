@@ -4,9 +4,13 @@
  */
 // standard includes
 #include <charconv>
+#include <string_view>
 
 // local includes
 #include "cursor_sync.h"
+#include "logging.h"
+
+using namespace std::literals;
 
 namespace cursor_sync {
   hub_t::hub_t(std::unique_ptr<backend_t> backend):
@@ -107,8 +111,12 @@ namespace cursor_sync {
         reply.png = std::move(image->png);
         reply.hotspot_x = image->hotspot_x;
         reply.hotspot_y = image->hotspot_y;
+      } else {
+        BOOST_LOG(debug) << "Pointer sync: couldn't read the pointer"sv;
       }
     }
+    BOOST_LOG(debug) << "Pointer sync: pointer "sv << sequence << (visible ? " shown, "sv : " hidden, "sv) << reply.png.size()
+                     << "-byte image for a "sv << stream_width << "-pixel stream, hotspot "sv << reply.hotspot_x << ',' << reply.hotspot_y;
     return replies.emplace(stream_width, std::move(reply)).first->second;
   }
 
