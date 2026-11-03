@@ -48,6 +48,8 @@ jobs:
       publish_release: ${{ needs.version.outputs.publish }}
       release_commit: ${{ github.sha }}
       release_version: ${{ needs.version.outputs.version }}
+    # Without this the called jobs see an empty secrets context, even for their own environment.
+    secrets: inherit
 
   release:
     name: Release
