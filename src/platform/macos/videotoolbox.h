@@ -355,5 +355,9 @@ namespace video {
     std::mutex stats_mutex;  ///< Serializes latency statistics across output callbacks.
     logging::min_max_avg_periodic_logger<double> capture_latency_logger;  ///< Capture-to-submit latency statistics.
     logging::min_max_avg_periodic_logger<double> encode_latency_logger;  ///< Submit-to-packet latency statistics.
+    logging::min_max_avg_periodic_logger<double> submit_call_logger;  ///< Time spent inside VTCompressionSessionEncodeFrame.
+    std::atomic<int> submitted_frames {0};  ///< Frames submitted since rate_window_start.
+    int encoded_frames = 0;  ///< Packets produced since rate_window_start; guarded by stats_mutex.
+    std::chrono::steady_clock::time_point rate_window_start;  ///< Start of the current frame-rate window; guarded by stats_mutex.
   };
 }  // namespace video

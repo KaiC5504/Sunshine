@@ -619,7 +619,8 @@ namespace video {
       config(config),
       device(std::move(device)),
       capture_latency_logger(debug, "VideoToolbox capture-to-submit latency", "ms"),
-      encode_latency_logger(debug, "VideoToolbox submit-to-packet latency", "ms") {
+      encode_latency_logger(debug, "VideoToolbox submit-to-packet latency", "ms"),
+      submit_call_logger(debug, "VideoToolbox submit call", "ms") {
   }
 
   videotoolbox_encode_session_t::~videotoolbox_encode_session_t() {
@@ -806,6 +807,9 @@ namespace video {
     // before VTCompressionSessionEncodeFrame returns.
     auto *frame = new frame_context_t {packets, channel_data, frame_nr, frame_timestamp, now};
     const auto status = VTCompressionSessionEncodeFrame(session, device->current_frame(), pts, kCMTimeInvalid, frame_properties, frame, nullptr);
+    // VideoToolbox blocks here when its queue is full, which caps the frame rate below what it encodes.
+    submit_call_logger.collect_and_log(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - now).count());
+    ++submitted_frames;
     if (frame_properties) {
       CFRelease(frame_properties);
     }
@@ -856,6 +860,16 @@ namespace video {
         capture_latency_logger.collect_and_log(std::chrono::duration<double, std::milli>(frame->submit_time - *frame->capture_time).count());
       }
       encode_latency_logger.collect_and_log(std::chrono::duration<double, std::milli>(now - frame->submit_time).count());
+
+      ++encoded_frames;
+      if (rate_window_start == std::chrono::steady_clock::time_point {}) {
+        rate_window_start = now;
+      } else if (const auto window = now - rate_window_start; window >= 10s) {
+        const auto seconds = std::chrono::duration<double>(window).count();
+        BOOST_LOG(debug) << "VideoToolbox frame rate: "sv << submitted_frames.exchange(0) / seconds << " fps submitted, "sv << encoded_frames / seconds << " fps encoded"sv;
+        encoded_frames = 0;
+        rate_window_start = now;
+      }
     }
 
     auto packet = std::make_unique<packet_raw_generic>(std::move(annex_b), frame->frame_nr, keyframe);
