@@ -118,7 +118,8 @@ Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub | ssh <mac user>@<mac name>.loc
 Keep SSH on the home network: don't forward port 22 on the router.
 
 **Pairing a device over SSH.** The web UI works from any laptop's browser at `https://<mac-ip>:47990`, so no screen
-is needed for pairing. To do it from SSH instead, fetch the helper once on the Mac:
+is needed for pairing. Sending a PIN from that address needs it in Sunshine's allowed origins, once:
+`echo 'csrf_allowed_origins = https://<mac-ip>:47990' >> ~/.config/sunshine/sunshine.conf`, then restart Sunshine. To do it from SSH instead, fetch the helper once on the Mac:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/KaiC5504/Sunshine/personal/personal-mac/sunshine-pair.sh
