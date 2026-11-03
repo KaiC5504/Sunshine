@@ -895,7 +895,14 @@ namespace platf::virtualhid {
     //
     // Excluded from the test build: these tests assert the submitted virtual HID report, and
     // must not move the pointer of whoever is running the suite.
-    if (platf::macos::move_mouse_relative(delta_x, delta_y)) {
+    const auto &viewport = context.mouse_viewport;
+    const platf::macos::mouse::rect_t streamed {
+      static_cast<double>(viewport.offset_x),
+      static_cast<double>(viewport.offset_y),
+      static_cast<double>(viewport.width),
+      static_cast<double>(viewport.height),
+    };
+    if (platf::macos::move_mouse_relative(delta_x, delta_y, streamed)) {
       return;
     }
 #endif  // __APPLE__ && !SUNSHINE_TESTS

@@ -81,6 +81,20 @@ namespace platf {
       }
 
       /**
+       * @brief Convert the streamed display rectangle to clamping bounds.
+       * @param viewport The streamed display in global CoreGraphics point space.
+       * @return The display bounds, or an empty optional when the rectangle has no area.
+       */
+      inline std::optional<bounds_t>
+        viewport_bounds(const rect_t &viewport) {
+        if (viewport.width <= 0 || viewport.height <= 0) {
+          return std::nullopt;
+        }
+
+        return bounds_t {viewport.x, viewport.y, viewport.x + viewport.width, viewport.y + viewport.height};
+      }
+
+      /**
        * @brief Resolve the move event type for the currently held mouse buttons.
        * @param left True when the left button is held.
        * @param right True when the right button is held.
@@ -131,9 +145,10 @@ namespace platf {
      *
      * @param delta_x The horizontal movement in pointer units.
      * @param delta_y The vertical movement in pointer units.
+     * @param viewport The streamed display, or a rectangle with no area to allow the whole layout.
      * @return True when the movement was injected, false when CoreGraphics cannot be used.
      */
-    bool move_mouse_relative(int delta_x, int delta_y);
+    bool move_mouse_relative(int delta_x, int delta_y, const mouse::rect_t &viewport);
   }  // namespace macos
 
 }  // namespace platf

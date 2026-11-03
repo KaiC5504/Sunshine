@@ -4,14 +4,15 @@
  */
 
 #ifdef __APPLE__
-
-  // system includes
-  #include <CoreGraphics/CoreGraphics.h>
+  // test includes
+  #include "../../../tests_common.h"
 
   // standard includes
-  #include <gtest/gtest.h>
   #include <optional>
   #include <vector>
+
+  // platform includes
+  #include <CoreGraphics/CoreGraphics.h>
 
   // local includes
   #include "src/platform/macos/mouse_utils.h"
@@ -22,6 +23,7 @@ using platf::macos::mouse::layout_bounds;
 using platf::macos::mouse::move_event_button;
 using platf::macos::mouse::move_event_type;
 using platf::macos::mouse::rect_t;
+using platf::macos::mouse::viewport_bounds;
 
 namespace {
   std::optional<bounds_t> bounds_of(std::vector<rect_t> rects) {
@@ -95,6 +97,36 @@ TEST(MacosMouseUtils, AlternatingDeltaNetsToZero) {
 
   EXPECT_DOUBLE_EQ(900.0, point.x);
   EXPECT_DOUBLE_EQ(500.0, point.y);
+}
+
+TEST(MacosMouseUtils, ViewportBoundsCoverTheStreamedDisplay) {
+  const auto bounds = viewport_bounds({-2560, 40, 2560, 1440});
+  ASSERT_TRUE(bounds.has_value());
+  EXPECT_DOUBLE_EQ(-2560.0, bounds->min_x);
+  EXPECT_DOUBLE_EQ(40.0, bounds->min_y);
+  EXPECT_DOUBLE_EQ(0.0, bounds->max_x);
+  EXPECT_DOUBLE_EQ(1480.0, bounds->max_y);
+}
+
+TEST(MacosMouseUtils, ViewportBoundsAreEmptyWithoutArea) {
+  EXPECT_FALSE(viewport_bounds({0, 0, 0, 0}).has_value());
+  EXPECT_FALSE(viewport_bounds({0, 0, 1920, 0}).has_value());
+  EXPECT_FALSE(viewport_bounds({0, 0, -1, 1080}).has_value());
+}
+
+TEST(MacosMouseUtils, ClampToViewportKeepsThePointerOnTheStreamedDisplay) {
+  // The streamed display sits right of the main one; motion past its left edge must not
+  // carry the pointer onto the display the client cannot see.
+  const auto bounds = viewport_bounds({1920, 0, 2560, 1440});
+  ASSERT_TRUE(bounds.has_value());
+
+  const auto left = clamp_to_layout({100, 500}, *bounds);
+  EXPECT_DOUBLE_EQ(1920.0, left.x);
+  EXPECT_DOUBLE_EQ(500.0, left.y);
+
+  const auto right = clamp_to_layout({9000, 9000}, *bounds);
+  EXPECT_DOUBLE_EQ(4479.0, right.x);
+  EXPECT_DOUBLE_EQ(1439.0, right.y);
 }
 
 TEST(MacosMouseUtils, MoveTypeFollowsTheHeldButton) {

@@ -80,7 +80,7 @@ namespace platf {
   }
 
   namespace macos {
-    bool move_mouse_relative(int delta_x, int delta_y) {
+    bool move_mouse_relative(int delta_x, int delta_y, const mouse::rect_t &viewport) {
       // CoreGraphics discards posted events without Accessibility. Report that so the caller
       // can use the virtual HID path instead of silently dropping the movement.
       if (!AXIsProcessTrusted()) {
@@ -114,7 +114,10 @@ namespace platf {
       }
 
       auto target = CGPoint {base->x + delta_x, base->y + delta_y};
-      if (!layout || target.x < layout->min_x || target.y < layout->min_y || target.x >= layout->max_x || target.y >= layout->max_y) {
+      if (const auto streamed = mouse::viewport_bounds(viewport)) {
+        // Keep the pointer on the streamed display, as libvirtualhid does for absolute input.
+        target = mouse::clamp_to_layout(target, *streamed);
+      } else if (!layout || target.x < layout->min_x || target.y < layout->min_y || target.x >= layout->max_x || target.y >= layout->max_y) {
         const auto refreshed = active_layout_bounds();
         if (!refreshed) {
           return false;
