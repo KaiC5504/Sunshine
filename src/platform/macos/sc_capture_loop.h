@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <utility>
 
 // platform includes
 #include <CoreMedia/CoreMedia.h>
@@ -106,6 +107,37 @@ namespace platf::sckit {
    * Returns `false` when the sample buffer carried no usable pixel buffer.
    */
   using process_frame_fn_t = std::function<bool(CMSampleBufferRef sample_buffer, img_t *img)>;
+
+  /**
+   * @brief Notices when a display changes size, so capture can restart and pick a new capture size.
+   */
+  class display_size_watch_t {
+  public:
+    using size_type = std::pair<std::size_t, std::size_t>;  ///< Width and height in pixels.
+
+    /**
+     * @brief Start from the display's current size.
+     *
+     * @param read_size Reads the display size; called at most once per `interval`.
+     * @param interval Minimum time between reads.
+     */
+    display_size_watch_t(std::function<size_type()> read_size, std::chrono::nanoseconds interval);
+
+    /**
+     * @brief Check whether the display size differs from the starting one.
+     *
+     * @param now Current time.
+     * @return `true` once the size has changed, and from then on.
+     */
+    bool changed(std::chrono::steady_clock::time_point now);
+
+  private:
+    std::function<size_type()> read_size;  ///< Reads the display size.
+    size_type initial;  ///< Size when watching started.
+    std::chrono::nanoseconds interval;  ///< Minimum time between reads.
+    std::chrono::steady_clock::time_point next_read;  ///< Earliest time of the next read.
+    bool has_changed = false;  ///< Set once the size has changed.
+  };
 
   /**
    * @brief Run the ScreenCaptureKit capture loop until the pipeline interrupts it or the stream fails.

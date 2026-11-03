@@ -272,6 +272,23 @@ namespace platf {
     }
 
     /**
+     * @brief Read the pixel size of a display's current mode.
+     *
+     * @param display_id Display to read.
+     * @return Width and height in pixels, or zeros when the display has no mode.
+     */
+    sckit::display_size_watch_t::size_type display_pixel_size(CGDirectDisplayID display_id) {
+      CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display_id);
+      if (!mode) {
+        return {};
+      }
+
+      const sckit::display_size_watch_t::size_type size {CGDisplayModeGetPixelWidth(mode), CGDisplayModeGetPixelHeight(mode)};
+      CFRelease(mode);
+      return size;
+    }
+
+    /**
      * @brief Frame source adapter exposing an SCCapture controller to the capture loop.
      */
     class sc_frame_source_t: public sckit::frame_source_t {
@@ -280,9 +297,17 @@ namespace platf {
        * @brief Wrap a capture controller.
        *
        * @param capture Controller owned by the display; it must outlive the adapter.
+       * @param display_id Display being captured.
        */
-      explicit sc_frame_source_t(SCCapture *capture):
-          capture(capture) {
+      explicit sc_frame_source_t(SCCapture *capture, CGDirectDisplayID display_id):
+          capture(capture),
+          // The capture size was picked for the display's mode, so a new mode needs a new capture.
+          size_watch(
+            [display_id]() {
+              return display_pixel_size(display_id);
+            },
+            500ms
+          ) {
       }
 
       ~sc_frame_source_t() override {
@@ -309,10 +334,15 @@ namespace platf {
         // Checked on every wait, not per frame: a static screen delivers no frames.
         [capture updateShowsCursor:!cursor_sync::client_draws_pointer()];
         dispatch_semaphore_wait(frame_signal, dispatch_time(DISPATCH_TIME_NOW, timeout.count()));
+
+        if (!display_changed && size_watch.changed(std::chrono::steady_clock::now())) {
+          BOOST_LOG(info) << "SCCapture display mode changed; restarting capture to fit it"sv;
+          display_changed = true;
+        }
       }
 
       [[nodiscard]] bool stopped() const override {
-        return capture.streamFailed;
+        return capture.streamFailed || display_changed;
       }
 
       CMSampleBufferRef copy_latest_sample_buffer() override {
@@ -337,6 +367,8 @@ namespace platf {
 
       SCCapture *capture;  ///< Borrowed capture controller.
       dispatch_semaphore_t frame_signal {};  ///< Frame-arrival semaphore, retained while the stream runs.
+      sckit::display_size_watch_t size_watch;  ///< Notices display mode changes.
+      bool display_changed = false;  ///< Set once the display mode changed.
     };
   }  // namespace
 
@@ -509,7 +541,7 @@ namespace platf {
     }
 
     capture_e capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
-      sc_frame_source_t source {sc_capture};
+      sc_frame_source_t source {sc_capture, display_id};
       auto &policy = sckit::backend_policy();
 
       const auto status = sckit::run_capture_loop(source, policy, push_captured_image_cb, pull_free_image_cb, process_frame, SCKIT_FRAME_POLL_INTERVAL);

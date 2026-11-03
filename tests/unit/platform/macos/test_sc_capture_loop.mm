@@ -244,4 +244,44 @@ TEST(SCCaptureLoop, StopDelegateMarksStreamFailedUnlessStopping) {
     [capture release];
   }
 }
+
+TEST(SCCaptureLoop, UpdateShowsCursorChangesPointerDrawing) {
+  if (@available(macOS 14.0, *)) {
+    SCCapture *capture = [[SCCapture alloc] init];
+    ASSERT_NE(capture, nil);
+
+    [capture updateShowsCursor:YES];
+    EXPECT_TRUE(capture.showsCursor);
+    [capture updateShowsCursor:NO];
+    EXPECT_FALSE(capture.showsCursor);
+
+    [capture release];
+  }
+}
+
+TEST(SCCaptureLoop, DisplaySizeWatchNoticesANewSize) {
+  platf::sckit::display_size_watch_t::size_type size {4608, 2592};
+  int reads = 0;
+  platf::sckit::display_size_watch_t watch {
+    [&]() {
+      ++reads;
+      return size;
+    },
+    500ms
+  };
+  const auto start = std::chrono::steady_clock::now();
+
+  EXPECT_FALSE(watch.changed(start));
+  EXPECT_EQ(reads, 2);
+
+  size = {5120, 2880};
+  EXPECT_FALSE(watch.changed(start + 499ms));
+  EXPECT_EQ(reads, 2);
+  EXPECT_TRUE(watch.changed(start + 500ms));
+
+  // Stays changed, without reading again
+  size = {4608, 2592};
+  EXPECT_TRUE(watch.changed(start + 2s));
+  EXPECT_EQ(reads, 3);
+}
 #endif

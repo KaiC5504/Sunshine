@@ -28,6 +28,20 @@ namespace platf::sckit {
     return policy;
   }
 
+  display_size_watch_t::display_size_watch_t(std::function<size_type()> read_size, std::chrono::nanoseconds interval):
+      read_size(std::move(read_size)),
+      initial(this->read_size()),
+      interval(interval) {
+  }
+
+  bool display_size_watch_t::changed(std::chrono::steady_clock::time_point now) {
+    if (!has_changed && now >= next_read) {
+      next_read = now + interval;
+      has_changed = read_size() != initial;
+    }
+    return has_changed;
+  }
+
   capture_e run_capture_loop(
     frame_source_t &source,
     backend_policy_t &policy,
