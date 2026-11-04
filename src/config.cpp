@@ -779,7 +779,7 @@ namespace config {
     {
       0,
       0,
-      1,
+      0,  // realtime: on an M6 it paces each frame to the frame interval (16.6 ms at 60 fps vs 7.4 ms)
       -1,
     },  // vt
 
