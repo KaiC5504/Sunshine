@@ -138,6 +138,14 @@ namespace cursor_sync {
     bool client_draws_pointer(clock::time_point now);
 
     /**
+     * @brief Note that the client moved the pointer.
+     *
+     * macOS hides the pointer while the user types and shows it on the next mouse move, but
+     * keeps reporting it hidden until another app changes it, so a move counts as showing it.
+     */
+    void pointer_moved();
+
+    /**
      * @brief Start the thread that calls update() while polls wait.
      */
     void start_watching();
@@ -187,7 +195,9 @@ namespace cursor_sync {
     std::map<int, reply_t> replies;  ///< Replies for the current sequence, by stream width.
     std::int64_t sequence = 1;  ///< Increases whenever the pointer image or visibility changes.
     std::uint64_t seed = 0;  ///< Image seed seen at the last check.
-    bool visible = true;  ///< Visibility seen at the last check.
+    bool visible = true;  ///< Visibility reported to clients at the last check.
+    bool backend_visible = true;  ///< Visibility the backend reported at the last check.
+    bool moved_while_hidden = false;  ///< Whether the pointer moved since the backend last hid it.
     bool checked = false;  ///< Whether the backend has been read yet.
     std::optional<clock::time_point> lease_until;  ///< End of the local-drawing lease.
     bool stopping = false;  ///< Set when the watcher must exit.
@@ -215,6 +225,11 @@ namespace cursor_sync {
    * @return `true` while a client's local-drawing lease lasts.
    */
   bool client_draws_pointer();
+
+  /**
+   * @brief Tell this host's pointer hub that the client moved the pointer.
+   */
+  void pointer_moved();
 }  // namespace cursor_sync
 
 namespace platf {

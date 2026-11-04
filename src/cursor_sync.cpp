@@ -75,6 +75,11 @@ namespace cursor_sync {
     return lease_until && now < *lease_until;
   }
 
+  void hub_t::pointer_moved() {
+    std::scoped_lock lock {mutex};
+    moved_while_hidden = true;
+  }
+
   void hub_t::start_watching() {
     std::scoped_lock lock {mutex};
     if (!watcher.joinable()) {
@@ -122,7 +127,11 @@ namespace cursor_sync {
 
   bool hub_t::refresh() {
     const auto new_seed = backend->image_seed();
-    const auto new_visible = backend->visible();
+    if (const bool shown = backend->visible(); shown != backend_visible) {
+      backend_visible = shown;
+      moved_while_hidden = false;
+    }
+    const bool new_visible = backend_visible || moved_while_hidden;
     if (checked && new_seed == seed && new_visible == visible) {
       return false;
     }
@@ -190,5 +199,11 @@ namespace cursor_sync {
   bool client_draws_pointer() {
     auto *instance = hub();
     return instance && instance->client_draws_pointer(hub_t::clock::now());
+  }
+
+  void pointer_moved() {
+    if (auto *instance = hub()) {
+      instance->pointer_moved();
+    }
   }
 }  // namespace cursor_sync

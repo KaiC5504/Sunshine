@@ -137,6 +137,57 @@ TEST(CursorSyncTest, HiddenPointerIsReportedWithoutAnImage) {
   EXPECT_TRUE(fixture.replies[0].png.empty());
 }
 
+TEST(CursorSyncTest, MovingAPointerHiddenWhileTypingShowsItAgain) {
+  hub_fixture_t fixture;
+  fixture.poll(1);
+  fixture.cursor->shown = false;
+  fixture.hub.update(fixture.start + 1ms);
+  ASSERT_EQ(fixture.replies.size(), 1U);
+  EXPECT_FALSE(fixture.replies[0].visible);
+
+  // macOS keeps reporting the pointer hidden after the move that shows it again
+  fixture.poll(2);
+  fixture.hub.pointer_moved();
+  fixture.hub.update(fixture.start + 2ms);
+  ASSERT_EQ(fixture.replies.size(), 2U);
+  EXPECT_EQ(fixture.replies[1].sequence, 3);
+  EXPECT_TRUE(fixture.replies[1].visible);
+  EXPECT_EQ(fixture.replies[1].png, "png@2560#1");
+}
+
+TEST(CursorSyncTest, MovesBeforeAHideDoNotShowThePointer) {
+  hub_fixture_t fixture;
+  fixture.poll(1);
+  fixture.hub.pointer_moved();
+  fixture.cursor->shown = false;
+  fixture.hub.update(fixture.start + 1ms);
+
+  ASSERT_EQ(fixture.replies.size(), 1U);
+  EXPECT_FALSE(fixture.replies[0].visible);
+}
+
+TEST(CursorSyncTest, PointerHiddenAgainAfterBeingShownStartsHidden) {
+  hub_fixture_t fixture;
+  fixture.poll(1);
+  fixture.cursor->shown = false;
+  fixture.hub.update(fixture.start + 1ms);
+  fixture.hub.pointer_moved();
+  fixture.cursor->shown = true;
+  fixture.poll(2);
+  fixture.hub.update(fixture.start + 2ms);
+
+  fixture.poll(3);
+  fixture.cursor->shown = false;
+  fixture.hub.update(fixture.start + 3ms);
+  ASSERT_EQ(fixture.replies.size(), 3U);
+  EXPECT_FALSE(fixture.replies[2].visible);
+}
+
+TEST(CursorSyncTest, FreePointerMovedReachesTheHostHub) {
+  cursor_sync::pointer_moved();
+  SUCCEED();
+}
+
 TEST(CursorSyncTest, RendersOncePerChangeAndStreamWidth) {
   hub_fixture_t fixture;
   fixture.poll(std::nullopt);

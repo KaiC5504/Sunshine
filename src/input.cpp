@@ -29,6 +29,7 @@ extern "C" {
 
 // local includes
 #include "config.h"
+#include "cursor_sync.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
@@ -909,6 +910,7 @@ namespace input {
     auto &touch_port = input->touch_port;
 
     platf::abs_mouse(platf_input, platform_touch_port(touch_port), tpcoords->first, tpcoords->second);
+    cursor_sync::pointer_moved();
   }
 
   /**
